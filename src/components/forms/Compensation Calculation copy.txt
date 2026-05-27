@@ -1,0 +1,564 @@
+interface Page {
+  id: string;
+  type: 'page';
+  title: string;
+  alias: string;
+  icon: string;
+}
+
+interface Action {
+  id: string;
+  parent?: string;
+  section: string;
+  name: string;
+  type: 'actions';
+  behaviors: string[];
+  settings: {
+    disabled: string;
+    name: string;
+    designer_label: string;
+    designer_label_color: string;
+  };
+}
+
+interface ReadDataAction extends Action {
+  dbtable: string;
+  read_type: 'single' | 'all';
+  where?: string;
+}
+
+interface PhpAction extends Action {
+  code: string;
+  events?: string[];
+}
+
+interface HtmlView {
+  id: string;
+  parent?: string;
+  section: string;
+  name: string;
+  type: 'views';
+  code: string;
+  behaviors: string[];
+  settings: {
+    disabled: string;
+    name: string;
+    designer_label: string;
+    designer_label_color: string;
+  };
+}
+
+interface Field {
+  id: string;
+  parent?: string;
+  section: string;
+  name: string;
+  type: 'views';
+  behaviors: string[];
+  settings: {
+    disabled: string;
+    name: string;
+    designer_label: string;
+    designer_label_color: string;
+  };
+}
+
+interface TextField extends Field {
+  label: string;
+  fieldname: string;
+  default_value?: { value: string };
+  validation_function?: { function: string; php: string };
+}
+
+interface TextAreaField extends Field {
+  label: string;
+  fieldname: string;
+  rows: string;
+  cols: string;
+}
+
+interface ButtonField extends Field {
+  label: string;
+  fieldname: string;
+  btype: 'submit';
+  attributes?: string;
+}
+
+interface HiddenField extends Field {
+  fieldname: string;
+}
+
+interface MessageView {
+  id: string;
+  parent?: string;
+  section: string;
+  name: string;
+  type: 'views';
+  text: string;
+  behaviors: string[];
+}
+
+interface SaveDataAction extends Action {
+  dbtable: string;
+  datasource: string;
+  data_override?: string;
+  where?: string;
+}
+
+interface CompensationSystem {
+  [key: string]: Page | ReadDataAction | PhpAction | HtmlView | TextField | TextAreaField | ButtonField | HiddenField | MessageView | SaveDataAction;
+}
+
+interface CompensationData {
+  IRN: string;
+  WorkerID: string;
+  IncidentType: 'Injury' | 'Death';
+  IncidentDate: string;
+  AverageWeeklyWage: number;
+  AnnualEarningsAtDeath?: number;
+  FinalCompensationAmount?: number;
+  CCWDMedicalExpenses: number;
+  CCWDMiscExpenses: number;
+  CCWDDeductions: number;
+  CCWDFindings: string;
+  CCWDRecommendations: string;
+  EmailList?: string;
+  HCPORStatus?: string;
+  HCPMRStatus?: string;
+  HCPMRSubmissionDate?: string;
+  HCPMRDecisionDate?: string;
+  HCPMRDecisionReason?: string;
+}
+
+interface WorkerPersonalDetails {
+  WorkerFirstName: string;
+  WorkerLastName: string;
+  WorkerDOB: string;
+  SpouseFirstName?: string;
+  SpouseLastName?: string;
+  SpouseDOB?: string;
+}
+
+interface CurrentEmploymentDetails {
+  AverageWeeklyWage: number;
+}
+
+interface DependantPersonalDetails {
+  DependantID: string;
+  DependantFirstName: string;
+  DependantLastName: string;
+  DependantDOB: string;
+  DependantType: 'Child' | 'Parent' | 'Sibling' | 'Nominee';
+  DependanceDegree: number;
+}
+
+interface DictionaryItem {
+  DKey: string;
+  DValue: string;
+  DType: string;
+}
+
+interface InjuryChecklistItem {
+  DKey: string;
+  DValue: string;
+  DType: 'InjuryPercent';
+}
+
+interface FormData {
+  IRN: string;
+  WorkerID: string;
+  IncidentType: 'Injury' | 'Death';
+  IncidentDate: string;
+  AnnualEarningsAtDeath?: number;
+  ApplicantFirstName?: string;
+  ApplicantLastName?: string;
+  EmployerCPPSID?: string;
+}
+
+interface SystemParameters {
+  MinCompensationAmountDeath: number;
+  MaxCompensationAmountDeath: number;
+  WeeklyCompensationPerChildDeath: number;
+  MaxChildAge: number;
+  [key: string]: any;
+  
+  }
+  
+  
+  class CompensationCalculator {
+  private system: CompensationSystem;
+  private data: CompensationData;
+  private workerDetails: WorkerPersonalDetails;
+  private employmentDetails: CurrentEmploymentDetails;
+  private dependants: DependantPersonalDetails[];
+  private dictionary: DictionaryItem[];
+  private injuryChecklist: InjuryChecklistItem[];
+  private formData: FormData;
+  private sysParams: SystemParameters;
+
+  constructor(system: CompensationSystem) {
+    this.system = system;
+    this.data = {
+      IRN: '',
+      WorkerID: '',
+      IncidentType: 'Injury',
+      IncidentDate: '',
+      AverageWeeklyWage: 0,
+      CCWDMedicalExpenses: 0,
+      CCWDMiscExpenses: 0,
+      CCWDDeductions: 0,
+      CCWDFindings: '',
+      CCWDRecommendations: ''
+    };
+    this.dependants = [];
+    this.dictionary = [];
+    this.injuryChecklist = [];
+    this.sysParams = {
+      MinCompensationAmountDeath: 0,
+      MaxCompensationAmountDeath: 0,
+      WeeklyCompensationPerChildDeath: 0,
+      MaxChildAge: 0
+    };
+  }
+
+  public initialize(data: Partial<CompensationData>): void {
+    this.data = { ...this.data, ...data };
+    this.loadSystemParameters();
+    this.loadWorkerData();
+    this.loadDependants();
+    this.loadInjuryChecklist();
+  }
+
+  private loadSystemParameters(): void {
+    // Load system parameters from dictionary
+    this.dictionary.forEach(item => {
+      if (item.DType === 'SystemParameter') {
+        this.sysParams[item.DKey] = item.DValue;
+      }
+    });
+  }
+
+  private loadWorkerData(): void {
+    // In a real implementation, this would load from database
+    this.workerDetails = {
+      WorkerFirstName: 'John',
+      WorkerLastName: 'Doe',
+      WorkerDOB: '1980-01-01',
+      SpouseFirstName: 'Jane',
+      SpouseLastName: 'Doe',
+      SpouseDOB: '1982-05-15'
+    };
+
+    this.employmentDetails = {
+      AverageWeeklyWage: 500
+    };
+  }
+
+  private loadDependants(): void {
+    // In a real implementation, this would load from database
+    this.dependants = [
+      {
+        DependantID: '1',
+        DependantFirstName: 'Child1',
+        DependantLastName: 'Doe',
+        DependantDOB: '2010-06-20',
+        DependantType: 'Child',
+        DependanceDegree: 100
+      },
+      {
+        DependantID: '2',
+        DependantFirstName: 'Child2',
+        DependantLastName: 'Doe',
+        DependantDOB: '2012-08-15',
+        DependantType: 'Child',
+        DependanceDegree: 100
+      }
+    ];
+  }
+
+  private loadInjuryChecklist(): void {
+    // In a real implementation, this would load from database
+    this.injuryChecklist = [
+      { DKey: 'Loss of both hands', DValue: '100', DType: 'InjuryPercent' },
+      { DKey: 'Loss of both feet', DValue: '100', DType: 'InjuryPercent' },
+      { DKey: 'Loss of one hand and one foot', DValue: '100', DType: 'InjuryPercent' }
+    ];
+  }
+
+  public calculateCompensation(): void {
+    if (this.data.IncidentType === 'Death') {
+      this.calculateDeathCompensation();
+    } else {
+      this.calculateInjuryCompensation();
+    }
+  }
+
+  private calculateDeathCompensation(): void {
+    if (!this.formData.AnnualEarningsAtDeath) return;
+
+    const annualWage = this.formData.AnnualEarningsAtDeath;
+    let compensationAmount: number;
+
+    if (annualWage < this.sysParams.MinCompensationAmountDeath) {
+      compensationAmount = 8 * annualWage;
+    } else {
+      compensationAmount = this.sysParams.MaxCompensationAmountDeath;
+    }
+
+    this.data.FinalCompensationAmount = compensationAmount;
+  }
+
+  private calculateInjuryCompensation(): void {
+    const annualWage = this.employmentDetails.AverageWeeklyWage * 52;
+    const adjustedAnnualWage = annualWage < this.sysParams.MinCompensationAmountDeath 
+      ? annualWage 
+      : this.sysParams.MinCompensationAmountDeath;
+
+    // In a real implementation, this would use the injury checklist items selected
+    let totalCompensation = 0;
+    
+    // Sample calculation for one injury
+    const injuryFactor = 100; // From checklist
+    const doctorPercentage = 50; // From user input
+    const injuryCompensation = Math.ceil(((adjustedAnnualWage * 8 * doctorPercentage * injuryFactor) / 100) / 100;
+    totalCompensation += injuryCompensation;
+
+    // Add additional expenses
+    totalCompensation += this.data.CCWDMedicalExpenses;
+    totalCompensation += this.data.CCWDMiscExpenses;
+    totalCompensation -= this.data.CCWDDeductions;
+
+    this.data.FinalCompensationAmount = totalCompensation;
+  }
+
+  public validateMandatoryDocuments(): boolean {
+    const mandatoryDocs = this.getRequiredDocuments();
+    const submittedDocs = this.getSubmittedDocuments();
+
+    return mandatoryDocs.every(doc => submittedDocs.includes(doc));
+  }
+
+  private getRequiredDocuments(): string[] {
+    let docs: string[] = [];
+    
+    if (this.data.IncidentType === 'Death') {
+      docs = ['Supervisor statement', 'Death Certificate'];
+    } else {
+      docs = ['Supervisor statement', 'Final medical report'];
+    }
+
+    // Add payslip requirement for state employers
+    if (this.formData.EmployerCPPSID) {
+      // In real implementation, check employer type
+      docs.push('Payslip at the time of accident');
+    }
+
+    return docs;
+  }
+
+  private getSubmittedDocuments(): string[] {
+    // In real implementation, this would query the database
+    return ['Supervisor statement', 'Death Certificate'];
+  }
+
+  public saveCalculation(): void {
+    if (this.data.IncidentType === 'Death') {
+      this.saveDeathCalculation();
+    } else {
+      this.saveInjuryCalculation();
+    }
+
+    this.updateStatus();
+  }
+
+  private saveDeathCalculation(): void {
+    // Save worker details
+    // Save spouse details if available
+    // Save dependant details
+    // Save applicant details
+    // Save compensation breakdown
+  }
+
+  private saveInjuryCalculation(): void {
+    // Save injury checklist items
+    // Save worker details
+    // Save compensation amount
+  }
+
+  private updateStatus(): void {
+    this.data.HCPORStatus = 'CompensationCalculated';
+    this.data.HCPMRStatus = 'Pending';
+    this.data.HCPMRSubmissionDate = new Date().toISOString();
+    this.data.HCPMRDecisionDate = '0000-00-00 00:00:00';
+    this.data.HCPMRDecisionReason = '';
+
+    // Save to database tables
+  }
+
+  public getCompensationBreakdown(): string {
+    if (this.data.IncidentType === 'Death') {
+      return this.generateDeathCompensationBreakdown();
+    } else {
+      return this.generateInjuryCompensationBreakdown();
+    }
+  }
+
+  private generateDeathCompensationBreakdown(): string {
+    let html = '<h3>Compensation Calculation Follows</h3>';
+    
+    if (!this.formData.AnnualEarningsAtDeath) return html;
+
+    const annualWage = this.formData.AnnualEarningsAtDeath;
+    let compensationAmount: number;
+
+    if (annualWage < this.sysParams.MinCompensationAmountDeath) {
+      compensationAmount = 8 * annualWage;
+      html += `<p>Applying formula: Final Compensation Amount = 8 * ${annualWage}</p>`;
+    } else {
+      compensationAmount = this.sysParams.MaxCompensationAmountDeath;
+    }
+
+    html += `<p>Calculated compensation amount is: ${compensationAmount}</p>`;
+    html += '<h3>Compensation Amount Breakup Follows</h3>';
+
+    const hasSpouse = !!this.workerDetails.SpouseFirstName;
+    const hasChildren = this.dependants.some(d => d.DependantType === 'Child');
+    const hasOtherDependants = this.dependants.some(d => 
+      d.DependantType === 'Parent' || d.DependantType === 'Sibling'
+    );
+
+    // Generate appropriate compensation distribution based on dependants
+    if (hasSpouse && hasChildren) {
+      if (hasOtherDependants) {
+        // 50% to spouse, 25% to children, 25% to other dependants
+      } else {
+        // 50% to spouse, 50% to children
+      }
+    } else if (hasSpouse && !hasChildren) {
+      if (hasOtherDependants) {
+        // 50% to spouse, 50% to other dependants
+      } else {
+        // 100% to spouse
+      }
+    } else if (!hasSpouse && hasChildren) {
+      if (hasOtherDependants) {
+        // 50% to children, 50% to other dependants
+      } else {
+        // 100% to children
+      }
+    } else {
+      if (hasOtherDependants) {
+        // 100% to other dependants
+      } else {
+        // Funeral expenses only
+        html += '<p>Funeral expenses not exceeding 500 K will be paid</p>';
+        html += '<p>Additional medical expenses will be paid</p>';
+        html += '<p>Tribunal decision</p>';
+      }
+    }
+
+    return html;
+  }
+
+  private generateInjuryCompensationBreakdown(): string {
+    let html = '<h3>Compensation Calculation Follows</h3>';
+    
+    const weeklyWage = this.employmentDetails.AverageWeeklyWage;
+    const annualWage = weeklyWage * 52;
+    const adjustedAnnualWage = annualWage < this.sysParams.MinCompensationAmountDeath 
+      ? annualWage 
+      : this.sysParams.MinCompensationAmountDeath;
+
+    html += `<p>Worker weekly wage: ${weeklyWage} K</p>`;
+    html += `<p>Final worker weekly wage: ${weeklyWage} K</p>`;
+    html += `<p>Final worker annual wage: ${annualWage} K</p>`;
+
+    html += '<h3>Compensation For Specified Injuries</h3>';
+    html += `
+      <table width="100%" style="border:1px solid black;" class="checklist">
+        <tr>
+          <th width="50%">Criteria</th>
+          <th width="5%">Factor</th>
+          <th width="2%">Apply</th>
+          <th width="5%">Doctor %</th>
+          <th width="23%">Calculation</th>
+          <th width="5%">Compensation</th>
+        </tr>
+    `;
+
+    this.injuryChecklist.forEach((item, index) => {
+      const i = index + 1;
+      html += `
+        <tr>
+          <td><input name='criteria[]' type='hidden' value='${item.DKey}'/>${item.DKey}</td>
+          <td><input id='fa_${i}' type='hidden' name='factor[]' value='${item.DValue}' />${item.DValue}</td>
+          <td><input id='cb_${i}' type='checkbox' name='injury[]' value='${item.DValue}'/></td>
+          <td><input id='dp_${i}' type='text' name='docper[]' value='0' style='border:1px solid #ddd'/></td>
+          <td><div id='cd_${i}'>--</div></td>
+          <td><div id='ca_${i}'>0</div></td>
+        </tr>
+      `;
+    });
+
+    html += '</table>';
+    return html;
+  }
+
+  public generateWeeklyBenefitForChildren(): string {
+    if (this.data.IncidentType !== 'Death') return '';
+
+    const children = this.dependants.filter(d => d.DependantType === 'Child');
+    if (children.length === 0) return '';
+
+    let html = '<h4>Weekly Benefit Lumpsum For Children</h4><table width="100%">';
+    html += `
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>DOB</th>
+          <th>Age at Incident Date</th>
+          <th>No. Of Days Until Age 16</th>
+          <th>No. Of Weeks Until Age 16</th>
+          <th>Weekly Benefit Lumpsum For Children</th>
+        </tr>
+      </thead>
+    `;
+
+    const incidentDate = new Date(this.data.IncidentDate);
+    
+    children.forEach(child => {
+      const dob = new Date(child.DependantDOB);
+      const age16 = new Date(dob.getFullYear() + 16, dob.getMonth(), dob.getDate());
+      
+      if (incidentDate < age16) {
+        const diffMs = age16.getTime() - incidentDate.getTime();
+        const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
+        const diffWeeks = (diffDays / 7).toFixed(3);
+        const benefit = (this.sysParams.WeeklyCompensationPerChildDeath * parseFloat(diffWeeks)).toFixed(2);
+        
+        html += `
+          <tr>
+            <td>${child.DependantFirstName} ${child.DependantLastName}</td>
+            <td>${this.formatDate(dob)}</td>
+            <td>${this.calculateAge(dob, incidentDate)}</td>
+            <td>${diffDays}</td>
+            <td>${diffWeeks}</td>
+            <td>${benefit} K</td>
+          </tr>
+        `;
+      }
+    });
+
+    html += '</table>';
+    return html;
+  }
+
+  private formatDate(date: Date): string {
+    return `${date.getDate()}/${date.getMonth() + 1}/${date.getFullYear()}`;
+  }
+
+  private calculateAge(dob: Date, incidentDate: Date): number {
+    const diffMs = incidentDate.getTime() - dob.getTime();
+    return Math.floor(diffMs / (1000 * 60 * 60 * 24 * 365));
+  }
+}

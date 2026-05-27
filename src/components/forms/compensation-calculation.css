@@ -1,0 +1,84 @@
+/* Compensation Calculation Styles */
+.card {
+  background-color: white;
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  padding: 1.5rem;
+}
+
+/* Table styles */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.875rem;
+}
+
+th {
+  border: 1px solid #ddd;
+  background-color: #ba372a;
+  color: yellow;
+  font-weight: bold;
+  padding: 0.5rem;
+  text-align: left;
+}
+
+table tbody tr:hover td {
+  background-color: #fef9e7 !important;
+}
+
+table, td {
+  border-bottom: 1px solid #ddd;
+  border: 1px solid #ddd;
+  background-color: #fffcf6;
+  padding: 0.5rem;
+}
+
+h3, h4, h5 {
+  font-weight: bold;
+  color: #ba372a;
+  font-size: 1.125rem;
+  margin-bottom: 0.75rem;
+}
+
+/* Input styles */
+input[type="number"] {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 0.25rem;
+}
+
+/* Calculation card */
+.calculation-card {
+  background-color: #fffcf6;
+  border: 1px solid #ddd;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+/* Document status */
+.document-status {
+  border-top: 1px dashed #ddd;
+  border-bottom: 1px dashed #ddd;
+  padding: 0.5rem 0;
+  margin: 0.5rem 0;
+}
+/* Scope typography to just this component */
+.comp-calc .section-title,
+.comp-calc h3 {
+  font-size: 1.125rem; /* matches app form section headers (text-lg) */
+  font-weight: 600;
+}
+
+.comp-calc label {
+  font-size: 0.875rem; /* text-sm */
+  font-weight: 500;
+  color: #374151;       /* text-gray-700 */
+}
+
+.comp-calc .value,
+.comp-calc p,
+.comp-calc td,
+.comp-calc th {
+  font-size: 1rem;      /* text-base */
+}

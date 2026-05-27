@@ -1,0 +1,656 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { supabase } from '../../services/supabase';
+import { useAuth } from '../../context/AuthContext';
+import Form113View from './Form113View';
+import Form124View from './Form124View';
+import ListClaimDecisions from './ListClaimDecisions';
+import CompensationBreakupDetailsView from './CompensationBreakupDetailsView';
+import { downloadConsentOfAwardInjury } from '../../utils/ConsentOfAward-Injury';
+
+const CREST =
+  'https://ennhknwwfdlaudephyly.supabase.co/storage/v1/object/public/cpps/logocrest.png';
+
+interface Props {
+  IRN?: string;
+  irn?: string;
+  TBCRRID?: string;
+  formType?: 'Injury' | 'Death';
+  onCloseAll?: () => void;
+  onClose?: () => void;
+}
+
+type EmployerRow = {
+  OrganizationName: string;
+  InsuranceProviderIPACode: string | null;
+};
+
+type InsuranceRow = {
+  IPACODE: string;
+  InsuranceCompanyOrganizationName?: string;
+};
+
+const BANK_OPTIONS = [
+  'BSP',
+  'Kina',
+  'Westpac',
+  'Credit Bank',
+  'NBC',
+  'TISA',
+  'Womens Microbank',
+  'NDB',
+] as const;
+
+const ApprovedClaimsAwardedForPaymentsSectionReview: React.FC<Props> = ({
+  IRN,
+  irn,
+  formType = 'Injury',
+  onCloseAll,
+  onClose,
+}) => {
+  const { profile } = useAuth();
+  const resolvedIRN = useMemo(() => (IRN ?? irn ?? '').toString(), [IRN, irn]);
+  const [open, setOpen] = useState(true);
+
+  // who am I?
+  const [myStaffId, setMyStaffId] = useState<number | null>(null);
+  const isInjury = formType === 'Injury';
+
+  // ---------- Payment section state (prefilled from bankaccountdepositmaster) ----------
+  const [selectedEmployer, setSelectedEmployer] = useState<EmployerRow | null>(null);
+
+  const [insuranceList, setInsuranceList] = useState<InsuranceRow[]>([]);
+  const [insuranceProviderName, setInsuranceProviderName] = useState(''); // Drawer
+  const [insuranceOverrideOpen, setInsuranceOverrideOpen] = useState(false);
+  const [insuranceManuallyOverridden, setInsuranceManuallyOverridden] = useState(false);
+
+  const [bankName, setBankName] = useState<string>('');
+  const [drawerAccountNo, setDrawerAccountNo] = useState('');
+  const [paymentTypeMethod, setPaymentTypeMethod] = useState('');
+  const [reference, setReference] = useState('');
+
+  // OWC Account is a text field
+  const [owcAccountNumber, setOwcAccountNumber] = useState<string>('');
+
+  const [awardedAmount, setAwardedAmount] = useState<number>(0);
+  const [interestAmount, setInterestAmount] = useState<number>(0);
+  const [finalPaymentAmount, setFinalPaymentAmount] = useState<number>(0);
+  const [amountPaid, setAmountPaid] = useState<number>(0);
+  const [paidDate, setPaidDate] = useState<string>('');
+  const [paymentDetails, setPaymentDetails] = useState('');
+
+  // display-only from saved record
+  const [paymentManagerReviewStatus, setPaymentManagerReviewStatus] = useState<string>('');
+  const [batchNo, setBatchNo] = useState<string | number>('');
+
+  const [loadedFromDeposit, setLoadedFromDeposit] = useState(false);
+
+  // who am I
+  useEffect(() => {
+    (async () => {
+      if (!profile?.id) return;
+      const { data, error } = await supabase
+        .from('owcstaffmaster')
+        .select('OSMStaffID')
+        .eq('cppsid', profile.id)
+        .maybeSingle();
+      if (error) {
+        console.error(error);
+        return;
+      }
+      const sid = data?.OSMStaffID ? Number(data.OSMStaffID) : null;
+      setMyStaffId(sid);
+    })();
+  }, [profile?.id]);
+
+  // Insurance company list (for optional override)
+  useEffect(() => {
+    (async () => {
+      const { data, error } = await supabase
+        .from('insurancecompanymaster')
+        .select('*')
+        .order('InsuranceCompanyOrganizationName', { ascending: true });
+      if (error) {
+        console.error('insurancecompanymaster load error:', error);
+        setInsuranceList([]);
+        return;
+      }
+      setInsuranceList(Array.isArray(data) ? data : []);
+    })();
+  }, []);
+
+  // Try to load the saved deposit row for this IRN and prefill the form
+  useEffect(() => {
+    (async () => {
+      setLoadedFromDeposit(false);
+      setPaymentManagerReviewStatus('');
+      setBatchNo('');
+      if (!resolvedIRN) return;
+
+      const irnValue = /^\d+$/.test(resolvedIRN) ? Number(resolvedIRN) : resolvedIRN;
+
+      const { data, error } = await supabase
+        .from('bankaccountdepositmaster')
+        .select(
+          [
+            'Employer',
+            'Drawer',
+            'BankName',
+            'DrawerAccountNumber',
+            'PaymentTypeMethod',
+            'EbankReferenceNo',
+            'OWCAccountNumber',
+            'AwardedAmount',
+            'InterestAmount',
+            'FinalPaymentAmount',
+            'EbankAmountPaid',
+            'EbankIssuedDate',
+            'PaymentDetails',
+            'PaymentManagerReviewStatus',
+            'BatchNo',
+          ].join(', ')
+        )
+        .eq('IRN', irnValue)
+        .maybeSingle();
+
+      if (error) {
+        console.error('bankaccountdepositmaster load error:', error);
+        return;
+      }
+      if (!data) {
+        // no saved row; we'll still compute AwardedAmount below
+        return;
+      }
+
+      setSelectedEmployer(
+        data.Employer
+          ? { OrganizationName: data.Employer, InsuranceProviderIPACode: null }
+          : null
+      );
+
+      setInsuranceProviderName(data.Drawer ?? '');
+      setInsuranceManuallyOverridden(true); // stick to saved value unless manually changed
+
+      setBankName(data.BankName ?? '');
+      setDrawerAccountNo(data.DrawerAccountNumber ?? '');
+      setPaymentTypeMethod(data.PaymentTypeMethod ?? '');
+      setReference(data.EbankReferenceNo ?? '');
+
+      setOWCAccountNumberSafe(data.OWCAccountNumber);
+
+      setAwardedAmount(Number(data.AwardedAmount ?? 0));
+      setInterestAmount(Number(data.IntrestAmount ?? data.InterestAmount ?? 0)); // tolerate misspelling
+      setFinalPaymentAmount(Number(data.FinalPaymentAmount ?? 0));
+      setAmountPaid(Number(data.EbankAmountPaid ?? 0));
+
+      const issued = data.EbankIssuedDate ? String(data.EbankIssuedDate) : '';
+      setPaidDate(issued ? issued.slice(0, 10) : '');
+
+      setPaymentDetails(data.PaymentDetails ?? '');
+
+      setPaymentManagerReviewStatus(data.PaymentManagerReviewStatus ?? '');
+      setBatchNo(data.BatchNo ?? '');
+
+      setLoadedFromDeposit(true);
+    })();
+  }, [resolvedIRN]);
+
+  // Helper to keep OWC account number a safe string
+  const setOWCAccountNumberSafe = (val: any) => {
+    setOwcAccountNumber(val === null || val === undefined ? '' : String(val));
+  };
+
+  // If nothing loaded from deposit, compute AwardedAmount from claimcompensationworkerdetails
+  useEffect(() => {
+    (async () => {
+      if (loadedFromDeposit) return; // prefer saved row
+      if (!resolvedIRN) {
+        setAwardedAmount(0);
+        return;
+      }
+      const { data, error } = await supabase
+        .from('claimcompensationworkerdetails')
+        .select('CCWDCompensationAmount, CCWDMedicalExpenses, CCWDMiscExpenses, CCWDDeductions')
+        .eq('IRN', /^\d+$/.test(resolvedIRN) ? Number(resolvedIRN) : resolvedIRN);
+      if (error) {
+        console.error('award amount load error:', error);
+        setAwardedAmount(0);
+        return;
+      }
+      const total = (data || []).reduce((sum, row: any) => {
+        const comp = Number(row.CCWDCompensationAmount || 0);
+        const med = Number(row.CCWDMedicalExpenses || 0);
+        const misc = Number(row.CCWDMiscExpenses || 0);
+        const ded = Number(row.CCWDDeductions || 0);
+        return sum + (comp + med + misc - ded);
+      }, 0);
+      setAwardedAmount(Number.isFinite(total) ? total : 0);
+    })();
+  }, [resolvedIRN, loadedFromDeposit]);
+
+  // Keep Final Payment Amount = Awarded + Interest unless record already set it
+  useEffect(() => {
+    if (loadedFromDeposit) return; // respect saved value
+    const total = Number(awardedAmount || 0) + Number(interestAmount || 0);
+    setFinalPaymentAmount(Number.isFinite(total) ? Number(total.toFixed(2)) : 0);
+  }, [awardedAmount, interestAmount, loadedFromDeposit]);
+
+  // Close handler
+  const handleClose = () => {
+    if (onCloseAll) return onCloseAll();
+    if (onClose) return onClose();
+    setOpen(false);
+  };
+
+  // Document actions (preview-only)
+  const handleDownloadConsent = async () => {
+    if (!resolvedIRN) return;
+    if (isInjury) {
+      await downloadConsentOfAwardInjury(resolvedIRN, {
+        crestUrl: CREST,
+        includeSignature: false,
+      });
+    } else {
+      const mod = await import('../../utils/ConsentOfAward-Death');
+      const fn = (mod as any).downloadConsentOfAwardDeath || (mod as any).default;
+      if (!fn) return;
+      await fn(resolvedIRN, { crestUrl: CREST, includeSignature: false });
+    }
+  };
+
+  const handlePrintCertificateOfAward = async () => {
+    if (!resolvedIRN) return;
+    try {
+      const mod = await import('../../utils/CertificateOfAward_jspdf');
+      const fn =
+        (mod as any).generateCertificateOfAward ||
+        (mod as any).generateCertificateOfAwardPDF ||
+        (mod as any).default;
+      if (!fn) return;
+      await fn(resolvedIRN);
+    } catch (e) {
+      console.error(e);
+      // keep quiet (no browser popups)
+    }
+  };
+
+  const handlePrintPaymentChecklist = async () => {
+    if (!resolvedIRN) return;
+    const mod = await import('../../utils/ChecklistForPayment_jspdf');
+    const fn =
+      (mod as any).printChecklistForPayment ||
+      (mod as any).generateChecklistForPayment ||
+      (mod as any).default;
+    if (!fn) return;
+    await fn(resolvedIRN);
+  };
+
+  const handlePrintBankConfirmation = async () => {
+    if (!resolvedIRN) return;
+    const mod = await import('../../utils/BankConfirmationLetter_jspdf');
+    const fn =
+      (mod as any).printBankConfirmationLetter ||
+      (mod as any).generateBankConfirmationLetter ||
+      (mod as any).default;
+    if (!fn) return;
+    await fn(resolvedIRN);
+  };
+
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[60]">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/50" onClick={handleClose} />
+
+      {/* Modal */}
+      <div className="absolute inset-0 flex items-center justify-center p-4" onClick={handleClose}>
+        <div
+          className="bg-white rounded-lg shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between p-4 border-b">
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Payments Manager Review (Approved)— {formType}
+              </h2>
+              {resolvedIRN && <span className="text-sm text-gray-600">IRN: {resolvedIRN}</span>}
+            </div>
+            <button
+              onClick={handleClose}
+              className="text-gray-400 hover:text-gray-600"
+              aria-label="Close"
+              title="Close"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" viewBox="0 0 24 24" stroke="currentColor" fill="none">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="p-6 space-y-8 overflow-y-auto">
+            {/* Section 1: Embedded Form (inline) */}
+            <section className="border rounded-lg p-4">
+              <h3 className="text-lg font-semibold mb-4 text-primary">
+                {formType === 'Death' ? 'Form 124 — Death Claim Detail' : 'Form 113 — Injury Claim Detail'}
+              </h3>
+
+              {resolvedIRN ? (
+                formType === 'Death' ? (
+                  <Form124View irn={resolvedIRN} variant="embedded" className="w-full" />
+                ) : (
+                  <Form113View irn={resolvedIRN} variant="embedded" className="w-full" />
+                )
+              ) : (
+                <p className="text-gray-500">Claim details cannot be loaded without a valid IRN.</p>
+              )}
+            </section>
+
+            {/* Section 2: Claim Decisions (read-only history) */}
+            <section className="border rounded-lg p-4">
+              <h3 className="text-lg font-semibold mb-4 text-primary">Claim Decisions</h3>
+              {resolvedIRN ? (
+                <ListClaimDecisions irn={resolvedIRN} />
+              ) : (
+                <p className="text-gray-500">Claim decisions cannot be loaded without a valid IRN.</p>
+              )}
+            </section>
+
+            {/* Section 3: Compensation Breakup */}
+            <section className="border rounded-lg p-4">
+              <h3 className="text-lg font-semibold mb-4 text-primary">Compensation Breakup</h3>
+              {resolvedIRN ? (
+                <CompensationBreakupDetailsView IRN={resolvedIRN} IncidentType={formType} />
+              ) : (
+                <p className="text-gray-500">Compensation data cannot be loaded without a valid IRN.</p>
+              )}
+            </section>
+
+            {/* Section 4: Actions (preview only) */}
+            <section className="border rounded-lg p-4 bg-amber-50">
+              {isInjury && (
+                <p className="text-sm text-amber-800 mb-3">
+                  <strong>Note:</strong> You can generate a preview of the Consent Of Award and Certificate Of Award
+                  without the Commissioner&apos;s Signature. The final version will be generated only after approval.
+                </p>
+              )}
+
+              <div className="flex items-center gap-2 text-sm flex-wrap">
+                <span>Actions:</span>
+
+                <button
+                  type="button"
+                  className="px-3 py-1.5 bg-primary hover:bg-primary-dark text-white rounded-md disabled:opacity-50"
+                  onClick={handleDownloadConsent}
+                  disabled={!resolvedIRN}
+                >
+                  Print Consent of Award
+                </button>
+
+                <button
+                  type="button"
+                  className="px-3 py-1.5 bg-primary hover:bg-primary-dark text-white rounded-md disabled:opacity-50"
+                  onClick={handlePrintCertificateOfAward}
+                  disabled={!resolvedIRN}
+                >
+                  Print Certificate of Award
+                </button>
+
+                <button
+                  type="button"
+                  className="px-3 py-1.5 bg-primary hover:bg-primary-dark text-white rounded-md disabled:opacity-50"
+                  onClick={async () => {
+                    const mod = await import('../../utils/form6CPO_jspdf');
+                    const fn = (mod as any).printForm6 || (mod as any).generateForm6Pdf || (mod as any).default || (mod as any).print;
+                    if (fn) await fn(resolvedIRN);
+                  }}
+                  disabled={!resolvedIRN}
+                >
+                  Print Form 6
+                </button>
+
+                <button
+                  type="button"
+                  className="px-3 py-1.5 bg-primary hover:bg-primary-dark text-white rounded-md disabled:opacity-50"
+                  onClick={handlePrintPaymentChecklist}
+                  disabled={!resolvedIRN}
+                >
+                  Print Payment Checklist
+                </button>
+
+                <button
+                  type="button"
+                  className="px-3 py-1.5 bg-primary hover:bg-primary-dark text-white rounded-md disabled:opacity-50"
+                  onClick={handlePrintBankConfirmation}
+                  disabled={!resolvedIRN}
+                >
+                  Print Bank Confirmation Letter
+                </button>
+              </div>
+            </section>
+
+            {/* Section 5: Details of Payment Received (prefilled) */}
+            <section className="border rounded-lg p-4">
+              <h3 className="text-lg font-semibold mb-4 text-primary">Details of Payment Received</h3>
+
+              {/* Employer (read-only) */}
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">Employer</label>
+                <input
+                  className="w-full border rounded-md px-3 py-2 text-sm bg-gray-50"
+                  value={selectedEmployer?.OrganizationName || ''}
+                  disabled
+                />
+              </div>
+
+              {/* Insurance Provider (Drawer) with optional override */}
+              <div className="mb-4">
+                <div className="flex items-center justify-between">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Insurance Provider</label>
+                  <button
+                    type="button"
+                    className="text-sm text-primary hover:underline"
+                    onClick={() => setInsuranceOverrideOpen((v) => !v)}
+                  >
+                    {insuranceOverrideOpen ? 'Cancel Override' : 'Select Insurance Provider'}
+                  </button>
+                </div>
+                <input
+                  className="w-full border rounded-md px-3 py-2 text-sm"
+                  value={insuranceProviderName ?? ''}
+                  onChange={(e) => {
+                    setInsuranceProviderName(e.target.value);
+                    if (insuranceOverrideOpen) setInsuranceManuallyOverridden(true);
+                  }}
+                  disabled={!insuranceOverrideOpen}
+                />
+                {insuranceOverrideOpen && (
+                  <div className="mt-2 max-h-40 overflow-y-auto border rounded-md">
+                    {insuranceList.length > 0 ? (
+                      insuranceList.slice(0, 100).map((i: any) => {
+                        const name =
+                          i.InsuranceCompanyOrganizationName ??
+                          i.insurancecompanyorganizationName ??
+                          '';
+                        return (
+                          <button
+                            key={String(i.IPACODE ?? i.ipacode ?? i.id ?? Math.random())}
+                            type="button"
+                            className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50"
+                            onClick={() => {
+                              setInsuranceProviderName(name);
+                              setInsuranceManuallyOverridden(true);
+                              setInsuranceOverrideOpen(false);
+                            }}
+                          >
+                            {name || '(no name)'}
+                          </button>
+                        );
+                      })
+                    ) : (
+                      <div className="px-3 py-2 text-sm text-gray-500">No insurance providers found.</div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Bank + Drawer account */}
+              <div className="grid md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Select Bank Name</label>
+                  <select
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={bankName}
+                    onChange={(e) => setBankName(e.target.value)}
+                  >
+                    <option value="">-- Select --</option>
+                    {BANK_OPTIONS.map((b) => (
+                      <option key={b} value={b}>{b}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Drawer Account No</label>
+                  <input
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={drawerAccountNo}
+                    onChange={(e) => setDrawerAccountNo(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Payment method, reference */}
+              <div className="grid md:grid-cols-2 gap-4 mt-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Payment Type/Method</label>
+                  <input
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={paymentTypeMethod}
+                    onChange={(e) => setPaymentTypeMethod(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Reference</label>
+                  <input
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={reference}
+                    onChange={(e) => setReference(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* OWC Account Number (TEXT FIELD) */}
+              <div className="mt-4">
+                <label className="block text-sm font-medium text-gray-700 mb-1">OWC Account No</label>
+                <input
+                  className="w-full border rounded-md px-3 py-2 text-sm"
+                  value={owcAccountNumber}
+                  onChange={(e) => setOWCAccountNumberSafe(e.target.value)}
+                  placeholder="e.g., 123456789"
+                />
+              </div>
+
+              {/* Amounts */}
+              <div className="grid md:grid-cols-2 gap-4 mt-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Awarded Amount</label>
+                  <input
+                    type="number"
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={awardedAmount}
+                    onChange={(e) => setAwardedAmount(Number(e.target.value || 0))}
+                  />
+                  {!loadedFromDeposit && (
+                    <p className="text-xs text-gray-500 mt-1">
+                      Auto-summed from claimcompensationworkerdetails for this IRN.
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Interest Amount</label>
+                  <input
+                    type="number"
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={interestAmount}
+                    onChange={(e) => setInterestAmount(Number(e.target.value || 0))}
+                  />
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4 mt-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Final Payment Amount (Interest)</label>
+                  <input
+                    type="number"
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={finalPaymentAmount}
+                    onChange={(e) => setFinalPaymentAmount(Number(e.target.value || 0))}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Amount Paid</label>
+                  <input
+                    type="number"
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={amountPaid}
+                    onChange={(e) => setAmountPaid(Number(e.target.value || 0))}
+                  />
+                </div>
+              </div>
+
+              <div className="grid md:grid-cols-2 gap-4 mt-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Paid Date</label>
+                  <input
+                    type="date"
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={paidDate}
+                    onChange={(e) => setPaidDate(e.target.value)}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Payment Details</label>
+                  <input
+                    className="w-full border rounded-md px-3 py-2 text-sm"
+                    value={paymentDetails}
+                    onChange={(e) => setPaymentDetails(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Display saved status fields */}
+              <div className="mt-6 grid md:grid-cols-2 gap-4 text-xs text-gray-600">
+                <div>
+                  <span className="font-medium">Payment Manager Review Status:</span>{' '}
+                  {paymentManagerReviewStatus || '-'}
+                </div>
+                <div>
+                  <span className="font-medium">Batch No:</span>{' '}
+                  {String(batchNo ?? '') || '-'}
+                </div>
+              </div>
+            </section>
+          </div>
+
+          {/* Footer */}
+          <div className="p-4 border-t flex justify-end">
+            <button
+              onClick={handleClose}
+              className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default ApprovedClaimsAwardedForPaymentsSectionReview;

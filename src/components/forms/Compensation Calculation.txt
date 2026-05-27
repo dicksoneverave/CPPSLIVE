@@ -1,0 +1,398 @@
+// Main Page Configuration
+page "Compensation Calculation" {
+    alias: "compensation_calc"
+    icon: "fa-calculator"
+    layout: vertical
+    theme: {
+        primary_color: "#ba372a"
+        secondary_color: "#fef9e7"
+        text_color: "#333333"
+    }
+    
+    // Initial Data Loading Section
+    section "Load Data" {
+        // Lock record before proceeding
+        action "Lock Record" {
+            type: php
+            code: '''
+                $user = JFactory::getUser();
+                $userid = $user->id;
+                $irn = intval($_GET['IRN']);
+                
+                // Check if record is already locked
+                $d = JFactory::getDBO();
+                $query = $d->getQuery(true);
+                $query->select("LockedByCPOID")
+                    ->from("ApprovedClaimsCPOReview")
+                    ->where("IRN = " . $irn);
+                $d->setQuery($query);
+                $lockedByUserId = $d->loadResult();
+                
+                if ($lockedByUserId == 0 || $lockedByUserId == $userid) {
+                    // Lock the record
+                    $query = $d->getQuery(true)
+                        ->update("ApprovedClaimsCPOReview")
+                        ->set("LockedByCPOID = " . $userid)
+                        ->where("IRN = " . $irn);
+                    $d->setQuery($query);
+                    $d->execute();
+                    return "LockSuccess";
+                } else {
+                    JFactory::getApplication()->enqueueMessage('This claim is already locked by another user.', 'error');
+                    return "LockFail";
+                }
+            '''
+            events: ["LockSuccess", "LockFail"]
+        }
+        
+        // Handle lock failure
+        condition "LockFail" {
+            html '''
+                <p>Sorry. You cannot process this case as it is already locked and being processed by another officer.</p>
+            '''
+            javascript '''
+                document.addEventListener('DOMContentLoaded', function() {
+                    const elements = ['EmailList', 'CCWDFindings', 'CCWDRecommendations', 'Accept'];
+                    elements.forEach(id => {
+                        const el = document.getElementsByName(id)[0];
+                        if (el) el.disabled = true;
+                    });
+                });
+            '''
+        }
+        
+        // Load worker and claim data
+        action "Load Worker Data" {
+            type: read_data
+            table: "form1112master"
+            where: "IRN={data.quote:IRN}"
+            return_as: "read_f1112m"
+        }
+        
+        action "Load Employment Details" {
+            type: read_data
+            table: "currentemploymentdetails"
+            where: "WorkerID={data.quote:WorkerID}"
+            return_as: "CED"
+        }
+        
+        action "Load Personal Details" {
+            type: read_data
+            table: "workerpersonaldetails"
+            where: "WorkerID={data.quote:WorkerID}"
+            return_as: "WPD"
+        }
+        
+        action "Load Dependents" {
+            type: read_data
+            table: "dependantpersonaldetails"
+            where: "WorkerID={data.quote:WorkerID}"
+            return_as: "DPD"
+        }
+        
+        action "Load System Parameters" {
+            type: read_data
+            table: "dictionary"
+            where: "DType='SystemParameter'"
+            return_as: "dict"
+        }
+        
+        // Determine incident type
+        action "Check Incident Type" {
+            type: php
+            code: '''
+                if ($this->data['IncidentType']=="Injury")
+                    return "Injury";
+                else
+                    return "Death";
+            '''
+            events: ["Injury", "Death"]
+        }
+        
+        // Load injury-specific data
+        condition "Injury" {
+            action "Load Injury Data" {
+                type: read_data
+                table: "form3master"
+                where: "IRN={data.quote:IRN}"
+                return_as: "read_f3m"
+            }
+            
+            action "Load Injury Checklist" {
+                type: read_data
+                table: "dictionary"
+                where: "DType='InjuryPercent'"
+                return_as: "InjuryChecklist"
+            }
+        }
+        
+        // Load death-specific data
+        condition "Death" {
+            action "Load Death Data" {
+                type: read_data
+                table: "form4master"
+                where: "IRN={data.quote:IRN}"
+                return_as: "read_f4m"
+            }
+        }
+        
+        // Check mandatory documents
+        action "Check Mandatory Documents" {
+            type: php
+            code: '''
+                $d = JFactory::getDBO();
+                $cppsid = $this->data['EmployerCPPSID'];
+                $it = $this->data['IncidentType'];
+                
+                // Determine required documents based on case type
+                $mdd = ['Supervisor statement', 'Death Certificate'];
+                $mdi = ['Supervisor statement', 'Final medical report'];
+                $mda = ($it == "Death") ? $mdd : $mdi;
+                
+                // Add payslip requirement for state employers
+                $query = $d->getQuery(true);
+                $query->select("OrganizationType")
+                    ->from("EmployerMaster")
+                    ->where("CPPSID='".$cppsid."'");
+                $d->setQuery($query);
+                $ot = $d->loadResult();
+                
+                if($ot == "State") array_push($mda, 'Payslip at the time of accident');
+                
+                // Check which documents are present
+                $rd = "('".implode("','", $mda)."')";
+                $query = $d->getQuery(true);
+                $query->select("AttachmentType")
+                    ->from("FormAttachments")
+                    ->where("IRN=".$_GET['IRN']." and AttachmentType in ".$rd);
+                $d->setQuery($query);
+                $d->execute();
+                
+                return ($d->getNumRows() == count($mda)) ? "mdavailable" : "mdmissing";
+            '''
+            events: ["mdavailable", "mdmissing"]
+        }
+    }
+    
+    // Main Content Section
+    section "Calculation" {
+        // Display for death cases
+        condition "Death" {
+            html '''
+                <h3>Compensation Calculation</h3>
+                <style>
+                    table { border-collapse: collapse; width: 100%; font-size: 12px; }
+                    th { border: 1px solid #ddd; background-color: #ba372a; color: yellow; }
+                    table tbody tr:hover td { background-color: #fef9e7 !important; }
+                    table, td { border-bottom: 1px solid #ddd; border: 1px solid #ddd; background-color: #fffcf6; }
+                    h3, h4, h5 { font-weight: bold; color: #ba372a; font-size: 14px; }
+                </style>
+            '''
+            
+            // Death case compensation calculation
+            html '''
+                <?php
+                // PHP code for death case calculation
+                // This would include all the death case calculation logic from the original
+                // including compensation breakup tables, spouse/children calculations, etc.
+                ?>
+            '''
+        }
+        
+        // Display for injury cases
+        condition "Injury" {
+            html '''
+                <h3>Compensation Calculation</h3>
+                <style>
+                    table { border-collapse: collapse; width: 100%; font-size: 12px; }
+                    th { border: 1px solid #ddd; background-color: #ba372a; color: yellow; }
+                    table tbody tr:hover td { background-color: #fef9e7 !important; }
+                    table, td { border-bottom: 1px solid #ddd; border: 1px solid #ddd; background-color: #fffcf6; }
+                    h3, h4, h5 { font-weight: bold; color: #ba372a; font-size: 14px; }
+                </style>
+            '''
+            
+            // Injury case compensation calculation
+            html '''
+                <?php
+                // PHP code for injury case calculation
+                // This would include all the injury checklist logic from the original
+                // with checkboxes, doctor percentages, and compensation calculations
+                ?>
+            '''
+        }
+        
+        // Weekly benefit for children (common to both cases)
+        html '''
+            <?php
+            // PHP code for weekly benefit calculation for children
+            // This would show the table of weekly benefits for children under 16
+            ?>
+        '''
+        
+        // Additional expenses section
+        section "Additional Expenses" {
+            heading: "Additional Expenses"
+            
+            input "Medical Expenses (+)" {
+                type: text
+                name: "CCWDMedicalExpenses"
+                default: "0"
+                validation: {
+                    function: "restrictNonNegativeNumbers()"
+                }
+            }
+            
+            input "Misc Expenses (+)" {
+                type: text
+                name: "CCWDMiscExpenses"
+                default: "0"
+                validation: {
+                    function: "restrictNonNegativeNumbers()"
+                }
+            }
+            
+            input "Deductions (-)" {
+                type: text
+                name: "CCWDDeductions"
+                default: "0"
+                validation: {
+                    function: "restrictNonNegativeNumbers()"
+                }
+            }
+        }
+        
+        // Final compensation amount display
+        html '''
+            <p style="color: #ba372a;"><strong>Final Compensation Amount: </strong></p>
+            <div id="fca" class="validate['required']">0</div>
+        '''
+        
+        // Form submission section (only if mandatory docs are available)
+        condition "mdavailable" {
+            input "Email IDs" {
+                type: text
+                name: "EmailList"
+            }
+            
+            input "Findings" {
+                type: textarea
+                name: "CCWDFindings"
+                rows: 3
+                cols: 45
+            }
+            
+            input "Recommendations" {
+                type: textarea
+                name: "CCWDRecommendations"
+                rows: 3
+                cols: 45
+            }
+            
+            button "Accept" {
+                type: submit
+                color: red
+                attributes: "onclick=return confirm('Are you sure you want to submit?')"
+            }
+        }
+        
+        // Warning if mandatory docs are missing
+        condition "mdmissing" {
+            html '''
+                <?php
+                // PHP code to show which mandatory documents are missing
+                // This would display a list of required vs. submitted documents
+                ?>
+            '''
+        }
+    }
+    
+    // Form Submission Section
+    section "Submit" {
+        // Handle injury case submission
+        condition "Injury" {
+            action "Save Injury Checklist" {
+                type: php
+                code: '''
+                    // PHP code to save injury checklist items
+                    // This would include all the injury case saving logic from the original
+                '''
+            }
+        }
+        
+        // Handle death case submission
+        condition "Death" {
+            action "Save Death Case Data" {
+                type: php
+                code: '''
+                    // PHP code to save death case compensation details
+                    // This would include all the death case saving logic from the original
+                '''
+            }
+        }
+        
+        // Common submission actions
+        action "Update Status" {
+            type: php
+            code: '''
+                $this->data['HCPORStatus'] = 'CompensationCalculated';
+                $this->data['HCPMRStatus'] = 'Pending';
+                $this->data['HCPMRSubmissionDate'] = date("Y-m-d");
+                $this->data['HCPMRDecisionDate'] = '0000-00-00 00:00:00';
+                $this->data['HCPMRDecisionReason'] = '';
+            '''
+        }
+        
+        action "Save CPO Review" {
+            type: save_data
+            table: "approvedclaimscporeview"
+            where: "IRN={data.quote:IRN}"
+            data: {
+                CPORStatus: "{data:HCPORStatus}"
+            }
+        }
+        
+        action "Save CPM Review" {
+            type: save_data
+            table: "compensationcalculationcpmreview"
+            data: {
+                IRN: "{data:IRN}",
+                CPMRStatus: "{data:HCPMRStatus}",
+                CPMRSubmissionDate: "{data:HCPMRSubmissionDate}",
+                CPMRDecisionDate: "{data:HCPMRDecisionDate}",
+                CPMRDecisionReason: "{data:HCPMRDecisionReason}"
+            }
+        }
+        
+        // Unlock record on submission
+        action "Unlock Record" {
+            type: php
+            code: '''
+                $irn = intval($_GET['IRN']);
+                $d = JFactory::getDBO();
+                $query = $d->getQuery(true)
+                    ->update("ApprovedClaimsCPOReview")
+                    ->set("LockedByCPOID = 0")
+                    ->where("IRN = " . $irn);
+                $d->setQuery($query);
+                $d->execute();
+            '''
+        }
+        
+        // Success message
+        message "Thank you" {
+            text: "Thank you. Processing complete. Compensation calculation is saved and forwarded to the Claims Manager for review."
+            color: blue
+        }
+    }
+    
+    // JavaScript validations
+    javascript '''
+        // All the JavaScript validation functions from the original
+        // Including:
+        // - updateFinalCompensationAmount()
+        // - checkListValidate()
+        // - restrictNumberRange()
+        // - Various event handlers for additional expenses
+    '''
+}

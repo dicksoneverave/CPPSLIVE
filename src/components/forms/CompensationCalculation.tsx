@@ -76,7 +76,7 @@ type ChecklistRow = {
   criteria: string;
   factor: number;
   checked: boolean;
-  doctorPercentage: number;
+  doctorPercentage: number | string;
   calculation: string;
   compensation: number;
 };
@@ -270,7 +270,7 @@ const proceedReadOnly = () => {
   const fmtK = (n: number | string | null | undefined) => {
     const v = typeof n === 'string' ? Number(n) : n;
     const safe = Number.isFinite(v as number) ? (v as number) : 0;
-    return `K ${(Math.round(safe * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+    return `K ${(Math.round(safe * 100) / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
   const parseNumeric = (val?: string | number | null) => {
     if (val === null || val === undefined) return 0;
@@ -745,7 +745,7 @@ const getChildrenWeeklyLumpTotal = () => {
   const handleInjuryChecklistChange = (
     index: number,
     field: 'checked' | 'doctorPercentage',
-    value: boolean | number
+    value: boolean | number | string
   ) => {
     const updated = [...injuryChecklist];
     if (field === 'checked') {
@@ -758,12 +758,12 @@ const getChildrenWeeklyLumpTotal = () => {
     } else {
       const pct = Number(value) || 0;
       if (pct >= 0 && pct <= 100) {
-        updated[index].doctorPercentage = pct;
+        updated[index].doctorPercentage = value as any;
         if (pct > 0) updated[index].checked = true;
         if (updated[index].checked) {
           const factor = updated[index].factor;
           updated[index].calculation = `((${3125}*8*${pct}*${factor})/100)/100`; //updated[index].calculation = `((${baseAnnualWage}*8*${pct}*${factor})/100)/100`;
-          updated[index].compensation = Math.ceil(((3125 * 8 *pct * factor) / 100) / 100);         //  updated[index].compensation = Math.ceil(((baseAnnualWage * 8 * pct * factor) / 100) / 100);
+          updated[index].compensation = Math.round(((3125 * 8 * pct * factor) / 100 / 100) * 100) / 100;         //  updated[index].compensation = Math.ceil(((baseAnnualWage * 8 * pct * factor) / 100) / 100);
         }
       }
     }
@@ -820,12 +820,12 @@ const calculateCompensation = () => {
 const saveInjuryChecklistRows = async (irnToSave: string) => {
   // Build current rows from UI
   const rows = injuryChecklist
-    .filter((r) => r.checked || r.doctorPercentage > 0 || r.compensation > 0)
+    .filter((r) => r.checked || Number(r.doctorPercentage) > 0 || r.compensation > 0)
     .map((r) => ({
       IRN: irnToSave,
       ICCLCriteria: r.criteria,
       ICCLFactor: r.factor,
-      ICCLDoctorPercentage: r.doctorPercentage,
+      ICCLDoctorPercentage: Number(r.doctorPercentage) || 0,
       ICCLCompensationAmount: r.compensation,
     }));
 
@@ -1206,7 +1206,7 @@ await supabase
   }
 
   const normalizedSubmitted = new Set(mandatoryDocuments.available.map((d) => (d || '').trim().toLowerCase()));
-  const selectedInjuryRows = injuryChecklist.filter((r) => r.checked && (r.compensation > 0 || r.doctorPercentage > 0));
+  const selectedInjuryRows = injuryChecklist.filter((r) => r.checked && (r.compensation > 0 || Number(r.doctorPercentage) > 0));
   
   
   // Derived amounts used only for UI display
@@ -1360,8 +1360,9 @@ const finalDisplayAmount = round2(baseAmount + medicalExpenses + miscExpenses - 
                             <td className="px-4 py-2 text-center">
                               <input
                                 type="number"
+                                step="0.01"
                                 value={item.doctorPercentage}
-                                onChange={(e) => handleInjuryChecklistChange(index, 'doctorPercentage', parseInt(e.target.value) || 0)}
+                                onChange={(e) => handleInjuryChecklistChange(index, 'doctorPercentage', e.target.value)}
                                 className="w-16 px-2 py-1 border border-gray-300 rounded text-center"
                                 min="0"
                                 max="100"
@@ -1371,7 +1372,8 @@ const finalDisplayAmount = round2(baseAmount + medicalExpenses + miscExpenses - 
                             <td className="px-4 py-2 text-right">
                               <input
                                 type="number"
-                                value={item.compensation}
+                                step="0.01"
+                                value={item.compensation.toFixed(2)}
                                 onChange={(e) => handleCompensationManualChange(index, parseFloat(e.target.value))}
                                 className="w-24 px-2 py-1 border border-gray-300 rounded text-right"
                                 min={0}

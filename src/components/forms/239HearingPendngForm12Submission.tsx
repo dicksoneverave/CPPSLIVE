@@ -23,6 +23,7 @@ const Form239HearingPendingForm12Submission: React.FC<Form239Props> = ({ irn, on
   const [isSuccess, setIsSuccess] = useState(false);
   const [generatingForm8, setGeneratingForm8] = useState(false);
   const [form8Message, setForm8Message] = useState<string | null>(null);
+  const [submissionType, setSubmissionType] = useState<string>('NewCase');
 
   useEffect(() => {
     const validateIRN = () => {
@@ -130,7 +131,8 @@ console.log('WorkerID:',form1112Data.WorkerID);
         .from('tribunalhearingschedule')
         .update({
           THSSetForHearing: 'Scheduled',
-          THSHearingStatus: 'HearingSet'
+          THSHearingStatus: 'HearingSet',
+          THSSubmissionType: submissionType
         })
         .eq('IRN', validIRN);
 
@@ -493,6 +495,47 @@ console.log('WorkerID:',form1112Data.WorkerID);
             {form8Message && (
               <p className="mt-2 text-sm text-green-600">{form8Message}</p>
             )}
+          </div>
+
+          {/* Set Submission Type */}
+          <div className="border rounded-lg p-4">
+            <h3 className="text-lg font-semibold mb-4 text-primary">Set Submission Type</h3>
+            <div className="flex flex-col sm:flex-row gap-6">
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="submissionType"
+                  value="NewCase"
+                  checked={submissionType === 'NewCase'}
+                  onChange={(e) => setSubmissionType(e.target.value)}
+                  className="form-radio h-4 w-4 text-primary border-gray-300 focus:ring-primary"
+                />
+                <span className="text-gray-900 font-medium">New Case</span>
+              </label>
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="submissionType"
+                  value="AdjournedCase"
+                  checked={submissionType === 'AdjournedCase'}
+                  onChange={(e) => setSubmissionType(e.target.value)}
+                  className="form-radio h-4 w-4 text-primary border-gray-300 focus:ring-primary"
+                />
+                <span className="text-gray-900 font-medium">Adjourned Case</span>
+              </label>
+              <label className="flex items-center space-x-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="submissionType"
+                  value="AppealedCase"
+                  checked={submissionType === 'AppealedCase'}
+                  onChange={(e) => setSubmissionType(e.target.value)}
+                  className="form-radio h-4 w-4 text-primary border-gray-300 focus:ring-primary"
+                />
+                <span className="text-gray-900 font-medium">Appealed Case</span>
+              </label>
+            </div>
+            <p className="text-textSecondary mt-2">Select the type of hearing submission before setting the hearing.</p>
           </div>
         </div>
           {/* Section 5: Set Hearing */}

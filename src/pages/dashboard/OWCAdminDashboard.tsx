@@ -21,6 +21,7 @@ import OWCInjuryPercentManager from '../../components/forms/OWCInjuryPercentMana
 import OWCBodyPartManager from '../../components/forms/OWCBodyPartManager';
 import OWCEditCompensationCalculation from '../../components/forms/OWCEditCompensationCalculation';
 import OWCAdminAnalytics from '../../components/dashboard/OWCAdminAnalytics';
+import UnlockCPOModal from '../../components/forms/UnlockCPOModal';
 
 // --- Small helper modal to pick a staff record to edit ---
 interface StaffRow {
@@ -183,6 +184,8 @@ const OWCAdminDashboard: React.FC = () => {
   const [showOWCBodyPartManager, setShowOWCBodyPartManager] = useState(false);
   const [owcBodyPartView, setOWCBodyPartView] = useState<'list' | 'add' | 'edit' | 'view'>('list');
   const [showOWCEditCompensationCalculation, setShowOWCEditCompensationCalculation] = useState(false);
+  const [showUnlockCPO, setShowUnlockCPO] = useState(false);
+
   const [drillDownFilter, setDrillDownFilter] = useState<{ type: 'incidentType' | 'province', value: string } | null>(null);
 
   const menuItems: Record<string, { items: string[]; submenus?: Record<string, string[]> }> = {
@@ -200,6 +203,8 @@ const OWCAdminDashboard: React.FC = () => {
     'InjuryPercent': { items: ['New', 'Edit', 'View'] },
     'BodyPart': { items: ['New', 'Edit', 'View'] },
     'Edit Compensation Calculation': { items: [] },
+    'Unlock CPO': { items: [] },
+
     'Archives': {
       items: ['Registrars Basket', 'Payment Section', 'Tribunal'],
       submenus: { 'Registrars Basket': ['Closed Time Barred Files', 'Non Work Related Cases'] }
@@ -266,6 +271,11 @@ const OWCAdminDashboard: React.FC = () => {
     if (menu === 'Edit Compensation Calculation') {
       setShowOWCEditCompensationCalculation(true);
     }
+
+    if (menu === 'Unlock CPO') {
+      setShowUnlockCPO(true);
+    }
+
 
     setActiveMenu(null);
   };
@@ -468,6 +478,11 @@ const OWCAdminDashboard: React.FC = () => {
           onClose={() => setShowOWCEditCompensationCalculation(false)}
         />
       )}
+
+      {showUnlockCPO && (
+        <UnlockCPOModal onClose={() => setShowUnlockCPO(false)} />
+      )}
+
     </div>
   );
 };

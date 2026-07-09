@@ -10,12 +10,12 @@ import { supabase } from "../../services/supabase";
 
 type Props = {
   title?: string;
-  /** Standalone mode (legacy): if you don’t pass `year`, it will use this as the starting year and show its own controls. */
   initialYear?: number;
-  /** Controlled mode from parent (ReportsDashboard): pass `year` and set `showControls={false}` to hide internal year picker. */
   year?: number;
-  /** Force showing/hiding header controls. Defaults to !controlled. */
   showControls?: boolean;
+  filterType?: 'Annual' | 'Monthly' | 'Quarterly';
+  month?: number;
+  quarter?: number;
 };
 
 type Row = { WorkerID: string; FirstSubmissionDate: string; IncidentType: string };
@@ -60,6 +60,9 @@ const AgeGroupAccidentTypeReport: React.FC<Props> = ({
   initialYear,
   year,
   showControls,
+  filterType = 'Annual',
+  month = 1,
+  quarter = 1,
 }) => {
   const isControlled = typeof year === "number";
   const [localYear, setLocalYear] = useState<number>(initialYear ?? new Date().getFullYear());
@@ -74,6 +77,22 @@ const AgeGroupAccidentTypeReport: React.FC<Props> = ({
 
   const captureRef = useRef<HTMLDivElement | null>(null);
 
+  const periodLabel = useMemo(() => {
+    if (filterType === 'Annual') return String(activeYear);
+    if (filterType === 'Monthly') {
+      return `${new Date(activeYear, month - 1).toLocaleString('default', { month: 'long' })} ${activeYear}`;
+    }
+    return `Q${quarter} (${['Jan-Mar', 'Apr-Jun', 'Jul-Sep', 'Oct-Dec'][quarter - 1]}) ${activeYear}`;
+  }, [activeYear, filterType, month, quarter]);
+
+  const filePeriod = useMemo(() => {
+    if (filterType === 'Annual') return String(activeYear);
+    if (filterType === 'Monthly') {
+      return `${new Date(activeYear, month - 1).toLocaleString('default', { month: 'short' })}${activeYear}`;
+    }
+    return `Q${quarter}_${activeYear}`;
+  }, [activeYear, filterType, month, quarter]);
+
   // Load data (form1112master -> workerpersonaldetails)
   useEffect(() => {
     (async () => {
@@ -83,10 +102,23 @@ const AgeGroupAccidentTypeReport: React.FC<Props> = ({
         setRows([]);
         setTotal(0);
 
-        const startISO = `${activeYear}-01-01`;
-        const endISO = `${activeYear + 1}-01-01`;
+        let startISO = `${activeYear}-01-01`;
+        let endISO = `${activeYear + 1}-01-01`;
 
-        // Incidents in year
+        if (filterType === 'Monthly' && month) {
+          const m = month < 10 ? `0${month}` : month;
+          startISO = `${activeYear}-${m}-01`;
+          const nextMonth = month === 12 ? 1 : month + 1;
+          const nextYear = month === 12 ? activeYear + 1 : activeYear;
+          const nm = nextMonth < 10 ? `0${nextMonth}` : nextMonth;
+          endISO = `${nextYear}-${nm}-01`;
+        } else if (filterType === 'Quarterly' && quarter) {
+          const qMap: any = { 1: ['01', '04'], 2: ['04', '07'], 3: ['07', '10'], 4: ['10', '01'] };
+          startISO = `${activeYear}-${qMap[quarter][0]}-01`;
+          endISO = `${quarter === 4 ? activeYear + 1 : activeYear}-${qMap[quarter][1]}-01`;
+        }
+
+        // Incidents in period
         const { data: inc, error: incErr } = await supabase
           .from("form1112master")
           .select("WorkerID, FirstSubmissionDate, IncidentType")
@@ -146,7 +178,7 @@ const AgeGroupAccidentTypeReport: React.FC<Props> = ({
         setLoading(false);
       }
     })();
-  }, [activeYear]);
+  }, [activeYear, filterType, month, quarter]);
 
   const colors = useMemo(() => {
     return {
@@ -163,7 +195,7 @@ const AgeGroupAccidentTypeReport: React.FC<Props> = ({
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `Accident_Types_by_Age_Group_${activeYear}.csv`;
+    a.download = `Accident_Types_by_Age_Group_${filePeriod}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -202,7 +234,7 @@ const AgeGroupAccidentTypeReport: React.FC<Props> = ({
     pdf.setFontSize(12);
     pdf.text(`CPPS Report: Accident Types by Age Group`, pageWidth / 2, cursorY, { align: "center" });
     cursorY += 14;
-    pdf.text(`Year: ${activeYear}`, pageWidth / 2, cursorY, { align: "center" });
+    pdf.text(`Period: ${periodLabel}`, pageWidth / 2, cursorY, { align: "center" });
     cursorY += 18;
 
     // Insert captured content
@@ -213,7 +245,7 @@ const AgeGroupAccidentTypeReport: React.FC<Props> = ({
 
     pdf.addImage(imgData, "PNG", cursorX, cursorY, imgW, imgH);
 
-    pdf.save(`Accident_Types_by_Age_Group_${activeYear}.pdf`);
+    pdf.save(`Accident_Types_by_Age_Group_${filePeriod}.pdf`);
   };
 
   return (
@@ -262,7 +294,7 @@ const AgeGroupAccidentTypeReport: React.FC<Props> = ({
         {/* Chart */}
         <div className="bg-white rounded-lg shadow p-4">
           <h4 className="font-medium mb-3">
-            Year {activeYear} · Total: {total}
+            Period: {periodLabel} · Total: {total}
           </h4>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
@@ -296,7 +328,7 @@ const AgeGroupAccidentTypeReport: React.FC<Props> = ({
                 <div className="h-6 bg-gray-100 rounded" />
               </div>
             ) : rows.length === 0 ? (
-              <div className="text-sm text-gray-500">No records found.</div>
+              <div className="text-sm text-gray-500 py-4 text-center">No records found for {periodLabel}.</div>
             ) : (
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-primary text-white">

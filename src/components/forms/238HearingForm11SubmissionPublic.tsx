@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, AlertCircle } from 'lucide-react';
+import { X, AlertCircle, Paperclip, FileText, Eye, Loader2 } from 'lucide-react';
 import { supabase } from '../../services/supabase';
 import { useAuth } from '../../context/AuthContext';
 import Form113View from './Form113View';
@@ -11,6 +11,13 @@ interface Form238Props {
   irn: string;
   hearingType: string;
   onClose: () => void;
+}
+
+interface TribunalAttachment {
+  DocattachmentID: number;
+  IRN: number;
+  AttachmentType: string;
+  FileName: string;
 }
 
 const Form238HearingForm11SubmissionPublic: React.FC<Form238Props> = ({ irn, hearingType, onClose }) => {
@@ -31,6 +38,40 @@ const Form238HearingForm11SubmissionPublic: React.FC<Form238Props> = ({ irn, hea
     confirmedAmount: '0',
     actionOfficer: ''
   });
+
+  // Tribunal Attachments states
+  const [existingAttachments, setExistingAttachments] = useState<TribunalAttachment[]>([]);
+  const [fetchingAttachments, setFetchingAttachments] = useState(false);
+
+  const loadExistingAttachments = async () => {
+    if (!validIRN) return;
+    try {
+      setFetchingAttachments(true);
+      const { data, error: dbErr } = await supabase
+        .from('tribunalattachments')
+        .select('*')
+        .eq('IRN', validIRN);
+      if (dbErr) throw dbErr;
+      setExistingAttachments(data || []);
+    } catch (err) {
+      console.error('Error loading tribunal attachments:', err);
+    } finally {
+      setFetchingAttachments(false);
+    }
+  };
+
+  useEffect(() => {
+    if (validIRN) {
+      loadExistingAttachments();
+    }
+  }, [validIRN]);
+
+  const getTribunalAttachmentUrl = (dbFileName: string) => {
+    if (!dbFileName) return null;
+    const path = dbFileName.replace(/\\/g, '/').replace(/^\/+/, '');
+    const { data } = supabase.storage.from('cpps').getPublicUrl(path);
+    return data?.publicUrl || null;
+  };
 
   // Validate IRN
   useEffect(() => {
@@ -340,6 +381,74 @@ const Form238HearingForm11SubmissionPublic: React.FC<Form238Props> = ({ irn, hea
               </button>
             </div>
             <p className="text-textSecondary">Click the button above to view required and submitted documents for this claim.</p>
+          </div>
+
+          {/* Tribunal Attachments */}
+          <div className="border rounded-lg p-4 bg-white shadow-sm">
+            <div className="flex items-center space-x-2 mb-4">
+              <Paperclip className="h-5 w-5 text-primary" />
+              <h3 className="text-lg font-semibold text-primary">Tribunal Attachments</h3>
+            </div>
+            
+            <p className="text-textSecondary mb-6 text-sm">
+              View uploaded documents related to this tribunal hearing.
+            </p>
+
+            {fetchingAttachments ? (
+              <div className="flex justify-center items-center py-8">
+                <Loader2 className="animate-spin h-8 w-8 text-primary" />
+              </div>
+            ) : existingAttachments.length === 0 ? (
+              <p className="text-textSecondary text-sm py-4 text-center">No attachments found for this claim.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {existingAttachments.map(att => {
+                  const url = getTribunalAttachmentUrl(att.FileName);
+                  const isImage = /\.(png|jpe?g|gif|webp)$/i.test(att.FileName);
+                  return (
+                    <div key={att.DocattachmentID} className="flex items-center justify-between p-2 bg-gray-50 rounded border hover:shadow-md transition-shadow">
+                      <div className="flex items-center space-x-2 overflow-hidden w-4/5">
+                        {isImage && url ? (
+                          <a href={url} target="_blank" rel="noopener noreferrer" className="block flex-shrink-0">
+                            <img
+                              src={url}
+                              alt={att.AttachmentType || "Attachment"}
+                              className="w-10 h-10 object-cover rounded border hover:opacity-80"
+                              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                            />
+                          </a>
+                        ) : (
+                          <div className="w-10 h-10 bg-gray-100 rounded border flex items-center justify-center flex-shrink-0">
+                            <FileText className="h-5 w-5 text-gray-400" />
+                          </div>
+                        )}
+                        <div className="overflow-hidden">
+                          <div className="text-xs font-semibold text-gray-900 truncate">
+                            {att.AttachmentType || "Other"}
+                          </div>
+                          <div className="text-[10px] text-gray-500 truncate font-mono" title={att.FileName}>
+                            {att.FileName.split('\\').pop() || att.FileName.split('/').pop()}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        {url && (
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+                            title="View Attachment"
+                          >
+                            <Eye className="h-4 w-4" />
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
 

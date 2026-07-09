@@ -39,8 +39,21 @@ function toMonthIndex(iso: string): number | null {
   return isNaN(d.getTime()) ? null : d.getMonth();
 }
 
-export default function EmployerMaritalStatusReport() {
-  const [year, setYear] = useState<number>(new Date().getFullYear());
+interface EmployerMaritalStatusReportProps {
+  year: number;
+  filterType?: 'Annual' | 'Monthly' | 'Quarterly';
+  month?: number;
+  quarter?: number;
+  title?: string;
+}
+
+export default function EmployerMaritalStatusReport({
+  year,
+  filterType = 'Annual',
+  month = 1,
+  quarter = 1,
+  title = "Accident Types based on Marital Status",
+}: EmployerMaritalStatusReportProps) {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -50,8 +63,21 @@ export default function EmployerMaritalStatusReport() {
     { status: "Married", injuries: 0, deaths: 0, total: 0 },
   ]);
 
-  const startISO = `${year}-01-01`;
-  const endISO   = `${year + 1}-01-01`;
+  const periodLabel = useMemo(() => {
+    if (filterType === 'Annual') return String(year);
+    if (filterType === 'Monthly') {
+      return `${new Date(year, month - 1).toLocaleString('default', { month: 'long' })} ${year}`;
+    }
+    return `Q${quarter} (${['Jan-Mar', 'Apr-Jun', 'Jul-Sep', 'Oct-Dec'][quarter - 1]}) ${year}`;
+  }, [year, filterType, month, quarter]);
+
+  const filePeriod = useMemo(() => {
+    if (filterType === 'Annual') return String(year);
+    if (filterType === 'Monthly') {
+      return `${new Date(year, month - 1).toLocaleString('default', { month: 'short' })}${year}`;
+    }
+    return `Q${quarter}_${year}`;
+  }, [year, filterType, month, quarter]);
 
   useEffect(() => {
     (async () => {
@@ -59,7 +85,23 @@ export default function EmployerMaritalStatusReport() {
         setLoading(true);
         setErr(null);
 
-        // Pull the year’s Form11/12 rows first
+        let startISO = `${year}-01-01`;
+        let endISO = `${year + 1}-01-01`;
+
+        if (filterType === 'Monthly' && month) {
+          const m = month < 10 ? `0${month}` : month;
+          startISO = `${year}-${m}-01`;
+          const nextMonth = month === 12 ? 1 : month + 1;
+          const nextYear = month === 12 ? year + 1 : year;
+          const nm = nextMonth < 10 ? `0${nextMonth}` : nextMonth;
+          endISO = `${nextYear}-${nm}-01`;
+        } else if (filterType === 'Quarterly' && quarter) {
+          const qMap: any = { 1: ['01', '04'], 2: ['04', '07'], 3: ['07', '10'], 4: ['10', '01'] };
+          startISO = `${year}-${qMap[quarter][0]}-01`;
+          endISO = `${quarter === 4 ? year + 1 : year}-${qMap[quarter][1]}-01`;
+        }
+
+        // Pull the period’s Form11/12 rows first
         const { data: forms, error: fErr } = await supabase
           .from("form1112master")
           .select("IRN, WorkerID, IncidentType, FirstSubmissionDate")
@@ -114,28 +156,46 @@ export default function EmployerMaritalStatusReport() {
         setLoading(false);
       }
     })();
-  }, [year]);
+  }, [year, filterType, month, quarter]);
 
   const grandTotal = useMemo(
     () => totals.reduce((s, r) => s + r.total, 0),
     [totals]
   );
 
+  const chartData = useMemo(() => {
+    if (filterType === 'Monthly') {
+      return monthly.filter((_, idx) => idx === month - 1);
+    }
+    if (filterType === 'Quarterly') {
+      const startIdx = (quarter - 1) * 3;
+      return monthly.slice(startIdx, startIdx + 3);
+    }
+    return monthly;
+  }, [monthly, filterType, month, quarter]);
+
   // ---------- EXPORTS ----------
   const exportCSV = () => {
     const header = ["Month","Injury (Single)","Injury (Married)","Death (Single)","Death (Married)"];
-    const rows = monthly.map(r => [r.label, r.inj_single, r.inj_married, r.death_single, r.death_married]);
+    const filteredRows = monthly.filter((_, idx) => {
+      if (filterType === 'Monthly') return idx === month - 1;
+      if (filterType === 'Quarterly') {
+        const startIdx = (quarter - 1) * 3;
+        return idx >= startIdx && idx < startIdx + 3;
+      }
+      return true;
+    });
+    const rows = filteredRows.map(r => [r.label, r.inj_single, r.inj_married, r.death_single, r.death_married]);
     const csv = [header, ...rows].map(r => r.join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `MaritalStatus_${year}.csv`;
+    a.href = url; a.download = `MaritalStatus_${filePeriod}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
   const exportPDF = async () => {
-    // Crest: put your crest file in /public/images/crest.png (or adjust path)
     const crestUrl = "/images/crest.png";
 
     const doc = new jsPDF({ orientation: "portrait", unit: "pt", format: "a4" });
@@ -158,9 +218,9 @@ export default function EmployerMaritalStatusReport() {
 
     doc.setFontSize(12);
     doc.setFont("helvetica", "normal");
-    doc.text(`CPPS Report: Accident Types based on Marital Status (${year})`, pageW/2, 130, { align: "center" });
+    doc.text(`CPPS Report: Accident Types based on Marital Status (${periodLabel})`, pageW/2, 130, { align: "center" });
 
-    // Summary table (matches the PHP idea: Single/Married vs Injury/Death)
+    // Summary table
     const head = [["Marital Status","Injury","Death","Total"]];
     const body = totals.map(t => [t.status, String(t.injuries), String(t.deaths), String(t.total)]);
     body.push(["Grand Total", String(totals[0].injuries + totals[1].injuries), String(totals[0].deaths + totals[1].deaths), String(grandTotal)]);
@@ -169,41 +229,38 @@ export default function EmployerMaritalStatusReport() {
       head, body,
       startY: 160,
       styles: { font: "helvetica", fontSize: 10, halign: "center" },
-      headStyles: { fillColor: [220, 38, 38], textColor: 255 }, // app red w/ white text
+      headStyles: { fillColor: [220, 38, 38], textColor: 255 },
       columnStyles: { 0: { halign: "left" } },
       margin: { left: 40, right: 40 }
+    });
+
+    const filteredMonthly = monthly.filter((_, idx) => {
+      if (filterType === 'Monthly') return idx === month - 1;
+      if (filterType === 'Quarterly') {
+        const startIdx = (quarter - 1) * 3;
+        return idx >= startIdx && idx < startIdx + 3;
+      }
+      return true;
     });
 
     // Data table per month
     autoTable(doc, {
       head: [["Month","Injury (Single)","Injury (Married)","Death (Single)","Death (Married)"]],
-      body: monthly.map(r => [r.label, r.inj_single, r.inj_married, r.death_single, r.death_married]),
+      body: filteredMonthly.map(r => [r.label, r.inj_single, r.inj_married, r.death_single, r.death_married]),
       styles: { font: "helvetica", fontSize: 9, halign: "center" },
       headStyles: { fillColor: [15, 23, 42], textColor: 255 },
       margin: { left: 40, right: 40 }
     });
 
-    doc.save(`MaritalStatus_${year}.pdf`);
+    doc.save(`MaritalStatus_${filePeriod}.pdf`);
   };
 
   return (
     <div className="space-y-6">
       {/* Heading */}
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Accident Types based on Marital Status</h2>
+        <h2 className="text-xl font-semibold">{title}</h2>
         <div className="flex items-center gap-2">
-          <button className="btn" onClick={() => setYear(y => y - 1)}>←</button>
-          <input
-            type="number"
-            className="w-24 px-2 py-1 border rounded"
-            value={year}
-            onChange={(e) => {
-              const v = parseInt(e.target.value, 10);
-              if (!Number.isNaN(v)) setYear(v);
-            }}
-          />
-          <button className="btn" onClick={() => setYear(y => y + 1)}>→</button>
-          <button className="btn" onClick={() => setYear(new Date().getFullYear())}>This Year</button>
           <button className="btn flex items-center gap-1" onClick={exportCSV} title="Download CSV">
             <FileDown className="h-4 w-4" /> CSV
           </button>
@@ -215,10 +272,10 @@ export default function EmployerMaritalStatusReport() {
 
       {/* Chart */}
       <div className="card">
-        <h3 className="text-lg font-semibold mb-4">Monthly breakdown by marital status ({year})</h3>
+        <h3 className="text-lg font-semibold mb-4">Monthly breakdown by marital status ({periodLabel})</h3>
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={monthly} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+            <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="label" />
               <YAxis allowDecimals={false} />
@@ -236,7 +293,7 @@ export default function EmployerMaritalStatusReport() {
 
       {/* Totals table */}
       <div className="card">
-        <h3 className="text-lg font-semibold mb-4">Year totals</h3>
+        <h3 className="text-lg font-semibold mb-4">Totals ({periodLabel})</h3>
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="app-table-head">

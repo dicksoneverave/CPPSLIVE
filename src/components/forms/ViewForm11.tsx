@@ -29,7 +29,7 @@ interface ViewForm11Props {
    * IMPORTANT: keep workerId as the only identifier passed from parent.
    * The component will look up the latest Form 11 for this worker automatically.
    */
-  workerId: string;
+  workerId?: string | null;
   irn?: number | string | null;
   onClose?: () => void;
   /**
@@ -265,7 +265,7 @@ const closePreview = () => setPreviewUrl(null);
   // Base defaults
   const base: Form11Data = useMemo(
     () => ({
-      WorkerID: workerId,
+      WorkerID: workerId || '',
       WorkerFirstName: '',
       WorkerLastName: '',
       WorkerDOB: '',
@@ -379,44 +379,7 @@ const closePreview = () => setPreviewUrl(null);
           .select('IPACODE, InsuranceCompanyOrganizationName');
         if (!cancelled) setInsuranceProviders(providers || []);
 
-        // 2) Worker & employment
-        const { data: workerData } = await supabase
-          .from('workerpersonaldetails')
-          .select('*')
-          .eq('WorkerID', workerId)
-          .single();
-
-        const { data: employmentData } = await supabase
-          .from('currentemploymentdetails')
-          .select('*')
-          .eq('WorkerID', workerId)
-          .maybeSingle();
-
-        let employerData: any = null;
-        if (employmentData?.EmployerCPPSID) {
-          const { data: em } = await supabase
-            .from('employermaster')
-            .select('*')
-            .eq('CPPSID', employmentData.EmployerCPPSID)
-            .limit(1);
-          employerData = em?.[0] || null;
-          if (!cancelled && employerData) setCurrentEmployerData(employerData);
-        }
-
-        // 3) Dependants & work history
-        const { data: depData } = await supabase
-          .from('dependantpersonaldetails')
-          .select('*')
-          .eq('WorkerID', workerId);
-        if (!cancelled) setDependants(depData || []);
-
-        const { data: historyData } = await supabase
-          .from('workhistory')
-          .select('*')
-          .eq('WorkerID', workerId);
-        if (!cancelled) setWorkHistory(historyData || []);
-
-        // 4) Form 11 row
+        // Load existing Form 11 row first (to get WorkerID if prop was not provided)
         let formRow: any = null;
         if (irn) {
           const { data, error } = await supabase
@@ -426,8 +389,7 @@ const closePreview = () => setPreviewUrl(null);
             .maybeSingle();
           if (error) throw error;
           formRow = data;
-          if (!cancelled && formRow?.IRN) setViewIRN(formRow.IRN);
-        } else {
+        } else if (workerId) {
           const { data: formRows, error } = await supabase
             .from('form1112master')
             .select('*')
@@ -436,16 +398,67 @@ const closePreview = () => setPreviewUrl(null);
             .limit(1);
           if (error) throw error;
           formRow = formRows?.[0] || null;
-          if (!cancelled && formRow?.IRN) setViewIRN(formRow.IRN);
+        }
+        if (!cancelled && formRow?.IRN) setViewIRN(formRow.IRN);
+
+        const resolvedWorkerId = workerId || formRow?.WorkerID || '';
+
+        let workerData: any = null;
+        let employmentData: any = null;
+        let depData: any[] = [];
+        let historyData: any[] = [];
+
+        if (resolvedWorkerId) {
+          // 2) Worker & employment
+          const { data: wData } = await supabase
+            .from('workerpersonaldetails')
+            .select('*')
+            .eq('WorkerID', resolvedWorkerId)
+            .single();
+          workerData = wData;
+
+          const { data: empData } = await supabase
+            .from('currentemploymentdetails')
+            .select('*')
+            .eq('WorkerID', resolvedWorkerId)
+            .maybeSingle();
+          employmentData = empData;
+
+          let employerData: any = null;
+          if (employmentData?.EmployerCPPSID) {
+            const { data: em } = await supabase
+              .from('employermaster')
+              .select('*')
+              .eq('CPPSID', employmentData.EmployerCPPSID)
+              .limit(1);
+            employerData = em?.[0] || null;
+            if (!cancelled && employerData) setCurrentEmployerData(employerData);
+          }
+
+          // 3) Dependants & work history
+          const { data: dData } = await supabase
+            .from('dependantpersonaldetails')
+            .select('*')
+            .eq('WorkerID', resolvedWorkerId);
+          depData = dData || [];
+          if (!cancelled) setDependants(depData);
+
+          const { data: hData } = await supabase
+            .from('workhistory')
+            .select('*')
+            .eq('WorkerID', resolvedWorkerId);
+          historyData = hData || [];
+          if (!cancelled) setWorkHistory(historyData);
         }
 
         // 5) Merge into formData
         const merged = {
           ...base,
+          WorkerID: resolvedWorkerId,
           ...workerData,
           ...employmentData,
           ...formRow,
-          WorkerHaveDependants: (depData || []).length > 0,
+          WorkerHaveDependants: depData.length > 0,
         } as Partial<Form11Data>;
         const sanitized = sanitizeForForm(base, merged) as Form11Data;
         if (!cancelled) setFormData(sanitized);

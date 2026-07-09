@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, AlertCircle } from 'lucide-react';
+import { X, AlertCircle, Upload, FileText, CheckCircle, AlertTriangle, Paperclip, Trash2, Eye, Loader2 } from 'lucide-react';
 import { supabase } from '../../services/supabase';
 import Form113View from './Form113View';
 import ListClaimDecisions from './ListClaimDecisions';
@@ -9,6 +9,13 @@ import DocumentStatus from './DocumentStatus';
 interface Form238Props {
   irn: string;
   onClose: () => void;
+}
+
+interface TribunalAttachment {
+  DocattachmentID: number;
+  IRN: number;
+  AttachmentType: string;
+  FileName: string;
 }
 
 const Form238HearingPendingForm11Submission: React.FC<Form238Props> = ({ irn, onClose }) => {
@@ -24,6 +31,232 @@ const Form238HearingPendingForm11Submission: React.FC<Form238Props> = ({ irn, on
   const [generatingForm8, setGeneratingForm8] = useState(false);
   const [form8Message, setForm8Message] = useState<string | null>(null);
   const [submissionType, setSubmissionType] = useState<string>('NewCase');
+
+  // Tribunal Attachments states
+  const [existingAttachments, setExistingAttachments] = useState<TribunalAttachment[]>([]);
+  const [fetchingAttachments, setFetchingAttachments] = useState(false);
+  const [stagedFiles, setStagedFiles] = useState<Record<string, File>>({});
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [uploading, setUploading] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const [uploadSuccess, setUploadSuccess] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ docattachmentID: number; fileName: string } | null>(null);
+
+  const loadExistingAttachments = async () => {
+    if (!validIRN) return;
+    try {
+      setFetchingAttachments(true);
+      const { data, error: dbErr } = await supabase
+        .from('tribunalattachments')
+        .select('*')
+        .eq('IRN', validIRN);
+      if (dbErr) throw dbErr;
+      setExistingAttachments(data || []);
+    } catch (err) {
+      console.error('Error loading tribunal attachments:', err);
+    } finally {
+      setFetchingAttachments(false);
+    }
+  };
+
+  useEffect(() => {
+    if (validIRN) {
+      loadExistingAttachments();
+    }
+  }, [validIRN]);
+
+  // Clean up object URLs on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(previews).forEach(url => URL.revokeObjectURL(url));
+    };
+  }, [previews]);
+
+  const getActiveCategoryIds = (subType: string) => {
+    if (subType === 'NewCase') {
+      return ['fulldoc', 'misc'];
+    } else if (subType === 'AdjournedCase') {
+      return ['fulldoc', 'adjourned', 'rop', 'misc'];
+    } else if (subType === 'AppealedCase') {
+      return ['fulldoc', 'appealed', 'rop', 'misc'];
+    }
+    return [];
+  };
+
+  const getExistingForCategory = (catId: string) => {
+    return existingAttachments.filter(att => {
+      const normalizedPath = (att.FileName || '').replace(/\\/g, '/');
+      if (catId === 'fulldoc') {
+        return att.AttachmentType === 'Full Claim FIle';
+      }
+      if (catId === 'adjourned') {
+        return att.AttachmentType === 'Adjourned';
+      }
+      if (catId === 'appealed') {
+        return att.AttachmentType === 'Appealed';
+      }
+      if (catId === 'rop') {
+        return (att.AttachmentType === 'ROP' || att.AttachmentType === 'Other') && normalizedPath.includes('/rop/');
+      }
+      if (catId === 'misc') {
+        return att.AttachmentType === 'Other' && normalizedPath.includes('/misc/');
+      }
+      return false;
+    });
+  };
+
+  const getTribunalAttachmentUrl = (dbFileName: string) => {
+    if (!dbFileName) return null;
+    const path = dbFileName.replace(/\\/g, '/').replace(/^\/+/, '');
+    const { data } = supabase.storage.from('cpps').getPublicUrl(path);
+    return data?.publicUrl || null;
+  };
+
+  const onPickFile = (categoryId: string) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setStagedFiles(prev => ({
+      ...prev,
+      [categoryId]: file
+    }));
+
+    if (file.type.startsWith('image/')) {
+      const url = URL.createObjectURL(file);
+      setPreviews(prev => {
+        if (prev[categoryId]) {
+          URL.revokeObjectURL(prev[categoryId]);
+        }
+        return {
+          ...prev,
+          [categoryId]: url
+        };
+      });
+    } else {
+      setPreviews(prev => {
+        if (prev[categoryId]) {
+          URL.revokeObjectURL(prev[categoryId]);
+        }
+        const copy = { ...prev };
+        delete copy[categoryId];
+        return copy;
+      });
+    }
+
+    // Reset the input value so selecting the same file again triggers onChange
+    e.target.value = '';
+  };
+
+  const clearStagedFile = (categoryId: string) => {
+    setStagedFiles(prev => {
+      const copy = { ...prev };
+      delete copy[categoryId];
+      return copy;
+    });
+    if (previews[categoryId]) {
+      URL.revokeObjectURL(previews[categoryId]);
+      setPreviews(prev => {
+        const copy = { ...prev };
+        delete copy[categoryId];
+        return copy;
+      });
+    }
+  };
+
+  const handleUploadAttachments = async () => {
+    if (!validIRN) return;
+    setUploading(true);
+    setUploadMessage(null);
+    setUploadSuccess(false);
+
+    try {
+      const categories = [
+        { id: 'fulldoc', label: 'Full Claim File Scan', folder: 'fulldoc', dbType: 'Full Claim FIle' },
+        { id: 'adjourned', label: 'Adjourned File', folder: 'adjourned', dbType: 'Adjourned' },
+        { id: 'appealed', label: 'Dismissed/Appealed File', folder: 'appealed', dbType: 'Appealed' },
+        { id: 'rop', label: 'ROP File', folder: 'rop', dbType: 'ROP' },
+        { id: 'misc', label: 'Other/Miscellaneous File', folder: 'misc', dbType: 'Other' }
+      ];
+
+      const activeCategoryIds = getActiveCategoryIds(submissionType);
+      
+      for (const catId of Object.keys(stagedFiles)) {
+        if (!activeCategoryIds.includes(catId)) continue;
+        const file = stagedFiles[catId];
+        const cat = categories.find(c => c.id === catId);
+        if (!cat) continue;
+
+        const timestamp = Date.now();
+        const originalName = file.name;
+        const lastDot = originalName.lastIndexOf('.');
+        const base = lastDot !== -1 ? originalName.slice(0, lastDot) : originalName;
+        const ext = lastDot !== -1 ? originalName.slice(lastDot) : '';
+        const safeBase = base.replace(/[^\w.-]+/g, '_');
+        
+        const storagePath = `attachments/tribunal/${cat.folder}/${safeBase}${timestamp}${ext}`;
+        const dbPath = `\\attachments\\tribunal\\${cat.folder}\\${safeBase}${timestamp}${ext}`;
+
+        const { error: storageErr } = await supabase.storage
+          .from('cpps')
+          .upload(storagePath, file);
+        if (storageErr) throw storageErr;
+
+        const { error: dbErr } = await supabase
+          .from('tribunalattachments')
+          .insert({
+            IRN: validIRN,
+            AttachmentType: cat.dbType,
+            FileName: dbPath
+          });
+        if (dbErr) throw dbErr;
+      }
+
+      setStagedFiles({});
+      Object.values(previews).forEach(URL.revokeObjectURL);
+      setPreviews({});
+      await loadExistingAttachments();
+      
+      setUploadSuccess(true);
+      setUploadMessage('Tribunal attachments uploaded successfully.');
+    } catch (err: any) {
+      console.error('Error uploading attachments:', err);
+      setUploadMessage(`Upload failed: ${err.message || err}`);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const confirmDeleteAttachment = async () => {
+    if (!deleteTarget) return;
+    const { docattachmentID, fileName } = deleteTarget;
+    setDeleteTarget(null);
+    try {
+      // 1. Attempt to delete from storage first (non-blocking)
+      const storagePath = fileName.replace(/\\/g, '/').replace(/^\/+/, '');
+      try {
+        const { error: storageErr } = await supabase.storage
+          .from('cpps')
+          .remove([storagePath]);
+        if (storageErr) {
+          console.warn('Storage deletion warning/failure:', storageErr.message);
+        }
+      } catch (storageEx) {
+        console.warn('Exception during storage deletion:', storageEx);
+      }
+
+      // 2. Delete from database second
+      const { error: dbErr } = await supabase
+        .from('tribunalattachments')
+        .delete()
+        .eq('DocattachmentID', docattachmentID);
+      if (dbErr) throw dbErr;
+
+      await loadExistingAttachments();
+    } catch (err: any) {
+      console.error('Error deleting attachment:', err);
+      alert(`Failed to delete attachment: ${err.message}`);
+    }
+  };
 
   useEffect(() => {
     const validateIRN = () => {
@@ -551,6 +784,203 @@ console.log('IRN:',validIRN);
             <p className="text-textSecondary mt-2">Select the type of hearing submission before setting the hearing.</p>
           </div>
 
+          {/* Tribunal Attachments Section */}
+          <div className="border rounded-lg p-4 bg-white shadow-sm">
+            <div className="flex items-center space-x-2 mb-4">
+              <Paperclip className="h-5 w-5 text-primary" />
+              <h3 className="text-lg font-semibold text-primary">Tribunal Attachments</h3>
+            </div>
+            
+            <p className="text-textSecondary mb-6 text-sm">
+              Upload scanned documents related to this tribunal hearing. Select files from your computer or use your mobile device's camera to capture photos.
+            </p>
+
+            {fetchingAttachments ? (
+              <div className="flex justify-center items-center py-8">
+                <Loader2 className="animate-spin h-8 w-8 text-primary" />
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {[
+                  { id: 'fulldoc', label: 'Full Claim File Scan', folder: 'fulldoc', dbType: 'Full Claim FIle' },
+                  { id: 'adjourned', label: 'Adjourned File', folder: 'adjourned', dbType: 'Adjourned' },
+                  { id: 'appealed', label: 'Dismissed/Appealed File', folder: 'appealed', dbType: 'Appealed' },
+                  { id: 'rop', label: 'ROP File', folder: 'rop', dbType: 'ROP' },
+                  { id: 'misc', label: 'Other/Miscellaneous File', folder: 'misc', dbType: 'Other' }
+                ]
+                  .filter(cat => getActiveCategoryIds(submissionType).includes(cat.id))
+                  .map(cat => {
+                    const existing = getExistingForCategory(cat.id);
+                    const stagedFile = stagedFiles[cat.id];
+                    const preview = previews[cat.id];
+
+                    return (
+                      <div key={cat.id} className="border rounded-lg p-4 bg-gray-50 flex flex-col justify-between hover:shadow-md transition-shadow">
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <span className="font-semibold text-gray-900 text-sm">{cat.label}</span>
+                            <span className="text-xs text-gray-500 font-mono">/{cat.folder}</span>
+                          </div>
+                          
+                          {/* Existing Attachments */}
+                          {existing.length > 0 && (
+                            <div className="space-y-2 mb-3">
+                              <span className="text-xs font-semibold text-green-700 block">Uploaded Files:</span>
+                              {existing.map(att => {
+                                const url = getTribunalAttachmentUrl(att.FileName);
+                                const isImage = /\.(png|jpe?g|gif|webp)$/i.test(att.FileName);
+                                return (
+                                  <div key={att.DocattachmentID} className="flex items-center justify-between p-2 bg-white rounded border border-green-200">
+                                    <div className="flex items-center space-x-2 overflow-hidden w-4/5">
+                                      {isImage && url ? (
+                                        <a href={url} target="_blank" rel="noopener noreferrer" className="block flex-shrink-0">
+                                          <img
+                                            src={url}
+                                            alt={cat.label}
+                                            className="w-10 h-10 object-cover rounded border hover:opacity-80"
+                                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                          />
+                                        </a>
+                                      ) : (
+                                        <div className="w-10 h-10 bg-gray-100 rounded border flex items-center justify-center flex-shrink-0">
+                                          <FileText className="h-5 w-5 text-gray-400" />
+                                        </div>
+                                      )}
+                                      <div className="text-xs text-gray-700 truncate font-mono" title={att.FileName}>
+                                        {att.FileName.split('\\').pop() || att.FileName.split('/').pop()}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center space-x-1">
+                                      {url && (
+                                        <a
+                                          href={url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+                                          title="View Attachment"
+                                        >
+                                          <Eye className="h-4 w-4" />
+                                        </a>
+                                      )}
+                                      <button
+                                        onClick={() => setDeleteTarget({ docattachmentID: att.DocattachmentID, fileName: att.FileName })}
+                                        className="p-1 text-red-500 hover:text-red-700 hover:bg-red-50 rounded"
+                                        title="Delete Attachment"
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Staged File */}
+                          {stagedFile && (
+                            <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg mb-3 flex items-center justify-between">
+                              <div className="flex items-center space-x-3 overflow-hidden">
+                                {preview ? (
+                                  <img
+                                    src={preview}
+                                    alt="staged preview"
+                                    className="w-12 h-12 object-cover rounded border"
+                                  />
+                                ) : (
+                                  <div className="w-12 h-12 bg-gray-100 rounded border flex items-center justify-center">
+                                    <FileText className="h-6 w-6 text-gray-400" />
+                                  </div>
+                                )}
+                                <div className="overflow-hidden">
+                                  <div className="text-xs font-semibold text-gray-900 truncate max-w-[150px]">{stagedFile.name}</div>
+                                  <div className="text-[10px] text-gray-500">{(stagedFile.size / 1024).toFixed(1)} KB</div>
+                                </div>
+                              </div>
+                              <button
+                                onClick={() => clearStagedFile(cat.id)}
+                                className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full"
+                                title="Clear Selection"
+                              >
+                                <X className="h-4 w-4" />
+                              </button>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* File Input */}
+                        <div className="mt-2">
+                          <label className="flex items-center justify-center px-4 py-2 border border-gray-300 border-dashed rounded-lg cursor-pointer bg-white hover:bg-gray-50 hover:border-gray-400 transition-colors text-sm text-gray-600 font-medium w-full">
+                            <input
+                              type="file"
+                              className="hidden"
+                              accept="image/*,application/pdf"
+                              onChange={onPickFile(cat.id)}
+                            />
+                            <Upload className="h-4 w-4 mr-2 text-gray-400" />
+                            {existing.length > 0 || stagedFile ? 'Change File' : 'Choose File / Camera'}
+                          </label>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )}
+
+            {/* Action Bar when files are staged */}
+            {Object.keys(stagedFiles).length > 0 && (
+              <div className="mt-6 p-4 bg-primary/5 border border-primary/20 rounded-lg flex flex-col sm:flex-row items-center justify-between gap-4">
+                <span className="text-sm font-medium text-primary">
+                  {Object.keys(stagedFiles).length} file{Object.keys(stagedFiles).length > 1 ? 's' : ''} selected to upload.
+                </span>
+                <div className="flex space-x-3 w-full sm:w-auto">
+                  <button
+                    onClick={() => {
+                      setStagedFiles({});
+                      Object.values(previews).forEach(URL.revokeObjectURL);
+                      setPreviews({});
+                    }}
+                    disabled={uploading}
+                    className="flex-1 sm:flex-none px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 transition-colors disabled:opacity-50"
+                  >
+                    Clear All
+                  </button>
+                  <button
+                    onClick={handleUploadAttachments}
+                    disabled={uploading}
+                    className="flex-1 sm:flex-none px-4 py-2 bg-primary text-white rounded-md text-sm font-medium hover:bg-primary-dark transition-all shadow-sm flex items-center justify-center space-x-2 disabled:opacity-50"
+                  >
+                    {uploading ? (
+                      <>
+                        <Loader2 className="animate-spin h-4 w-4" />
+                        <span>Uploading...</span>
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="h-4 w-4" />
+                        <span>Upload & Save</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {uploadMessage && (
+              <div className={`mt-4 p-3 rounded-lg text-sm flex items-center space-x-2 ${
+                uploadSuccess 
+                  ? 'bg-green-50 text-green-700 border border-green-200' 
+                  : 'bg-red-50 text-red-700 border border-red-200'
+              }`}>
+                {uploadSuccess ? (
+                  <CheckCircle className="h-5 w-5 text-green-600" />
+                ) : (
+                  <AlertTriangle className="h-5 w-5 text-red-600" />
+                )}
+                <span>{uploadMessage}</span>
+              </div>
+            )}
+          </div>
+
           {/* Section 6: Set Hearing */}
           <div className="border rounded-lg p-4">
             <div className="flex items-center justify-between mb-4">
@@ -612,6 +1042,42 @@ console.log('IRN:',validIRN);
                   className="flex-1 px-4 py-2 bg-primary text-white font-medium rounded-md hover:bg-primary-dark transition-colors"
                 >
                   Proceed
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-[80] backdrop-blur-sm">
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-md transform transition-all animate-in fade-in zoom-in duration-200">
+            <div className="p-6 text-center">
+              <div className="flex items-center justify-center w-12 h-12 mx-auto bg-red-100 rounded-full mb-4">
+                <AlertTriangle className="h-6 w-6 text-red-600" />
+              </div>
+              <h3 className="text-lg font-bold text-gray-900 mb-2">
+                Confirm Delete
+              </h3>
+              <p className="text-sm text-gray-600 mb-6">
+                Are you sure you want to delete this attachment? This action cannot be undone.
+              </p>
+              <div className="p-3 bg-gray-50 rounded-lg border text-xs text-gray-500 font-mono truncate mb-8 text-center" title={deleteTarget.fileName}>
+                {deleteTarget.fileName.split('\\').pop() || deleteTarget.fileName.split('/').pop()}
+              </div>
+              
+              <div className="flex space-x-3">
+                <button
+                  onClick={() => setDeleteTarget(null)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-md hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={confirmDeleteAttachment}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white font-medium rounded-md hover:bg-red-750 transition-colors"
+                >
+                  Delete
                 </button>
               </div>
             </div>

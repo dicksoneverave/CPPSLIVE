@@ -21,17 +21,40 @@ const ShimmerChart: React.FC = () => (
 
 interface Props {
   year: number;
+  filterType?: 'Annual' | 'Monthly' | 'Quarterly';
+  month?: number;
+  quarter?: number;
+  title?: string;
 }
 
-const GeneralAccidentProvinceReport: React.FC<Props> = ({ year }) => {
+const GeneralAccidentProvinceReport: React.FC<Props> = ({
+  year,
+  filterType = 'Annual',
+  month = 1,
+  quarter = 1,
+  title = "Accident Province wise – Accident Type",
+}) => {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
 
-  const startISO = `${year}-01-01`;
-  const endISO = `${year + 1}-01-01`;
-
   const printableRef = useRef<HTMLDivElement | null>(null);
+
+  const periodLabel = useMemo(() => {
+    if (filterType === 'Annual') return String(year);
+    if (filterType === 'Monthly') {
+      return `${new Date(year, month - 1).toLocaleString('default', { month: 'long' })} ${year}`;
+    }
+    return `Q${quarter} (${['Jan-Mar', 'Apr-Jun', 'Jul-Sep', 'Oct-Dec'][quarter - 1]}) ${year}`;
+  }, [year, filterType, month, quarter]);
+
+  const filePeriod = useMemo(() => {
+    if (filterType === 'Annual') return String(year);
+    if (filterType === 'Monthly') {
+      return `${new Date(year, month - 1).toLocaleString('default', { month: 'short' })}${year}`;
+    }
+    return `Q${quarter}_${year}`;
+  }, [year, filterType, month, quarter]);
 
   useEffect(() => {
     (async () => {
@@ -40,7 +63,23 @@ const GeneralAccidentProvinceReport: React.FC<Props> = ({ year }) => {
         setErr(null);
         setRows([]);
 
-        // Pull province + incident type within the year window
+        let startISO = `${year}-01-01`;
+        let endISO = `${year + 1}-01-01`;
+
+        if (filterType === 'Monthly' && month) {
+          const m = month < 10 ? `0${month}` : month;
+          startISO = `${year}-${m}-01`;
+          const nextMonth = month === 12 ? 1 : month + 1;
+          const nextYear = month === 12 ? year + 1 : year;
+          const nm = nextMonth < 10 ? `0${nextMonth}` : nextMonth;
+          endISO = `${nextYear}-${nm}-01`;
+        } else if (filterType === 'Quarterly' && quarter) {
+          const qMap: any = { 1: ['01', '04'], 2: ['04', '07'], 3: ['07', '10'], 4: ['10', '01'] };
+          startISO = `${year}-${qMap[quarter][0]}-01`;
+          endISO = `${quarter === 4 ? year + 1 : year}-${qMap[quarter][1]}-01`;
+        }
+
+        // Pull province + incident type within the date window
         const { data, error } = await supabase
           .from("form1112master")
           .select("IncidentProvince, IncidentType, FirstSubmissionDate")
@@ -77,7 +116,7 @@ const GeneralAccidentProvinceReport: React.FC<Props> = ({ year }) => {
         setLoading(false);
       }
     })();
-  }, [year]);
+  }, [year, filterType, month, quarter]);
 
   const totals = useMemo(
     () =>
@@ -105,7 +144,7 @@ const GeneralAccidentProvinceReport: React.FC<Props> = ({ year }) => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `Accident_Province_Injury_Death_${year}.csv`;
+      a.download = `Accident_Province_Injury_Death_${filePeriod}.csv`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
@@ -114,7 +153,6 @@ const GeneralAccidentProvinceReport: React.FC<Props> = ({ year }) => {
   };
 
   const printPDF = () => {
-    // Print layout mimics the PHP export header: crest, office title, CPPS Report title.
     try {
       window.print();
     } catch {}
@@ -133,7 +171,7 @@ const GeneralAccidentProvinceReport: React.FC<Props> = ({ year }) => {
         <div className="mt-1">
           CPPS Report: Accident Province wise - Accident Type Report
         </div>
-        <div className="text-sm mt-1">Year: {year}</div>
+        <div className="text-sm mt-1">Period: {periodLabel}</div>
       </div>
 
       {/* Actions */}
@@ -169,8 +207,7 @@ const GeneralAccidentProvinceReport: React.FC<Props> = ({ year }) => {
           id="acc-prov-report"
         >
           <h3 className="text-lg font-semibold mb-4">
-            Accident Province wise – Accident Type · Year {year} · Total:{" "}
-            {totals.total}
+            {title} · {periodLabel} · Total: {totals.total}
           </h3>
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
@@ -200,7 +237,7 @@ const GeneralAccidentProvinceReport: React.FC<Props> = ({ year }) => {
         ) : err ? (
           <div className="bg-red-50 text-red-700 p-3 rounded">{err}</div>
         ) : rows.length === 0 ? (
-          <div className="text-sm text-gray-500">No records found for {year}.</div>
+          <div className="text-sm text-gray-500">No records found for {periodLabel}.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">

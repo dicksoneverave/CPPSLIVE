@@ -52,9 +52,28 @@ function groupByMonth(dates: string[]): MonthDatum[] {
   return buckets.map((count, i) => ({ label: monthLabels[i], count }));
 }
 
-async function loadMonthlyFromForm1112(year: number): Promise<MonthDatum[]> {
-  const startISO = `${year}-01-01`;
-  const endISO = `${year + 1}-01-01`;
+async function loadMonthlyFromForm1112(
+  year: number,
+  filterType: 'Annual' | 'Monthly' | 'Quarterly' = 'Annual',
+  month: number = 1,
+  quarter: number = 1
+): Promise<MonthDatum[]> {
+  let startISO = `${year}-01-01`;
+  let endISO = `${year + 1}-01-01`;
+
+  if (filterType === 'Monthly' && month) {
+    const m = month < 10 ? `0${month}` : month;
+    startISO = `${year}-${m}-01`;
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const nextYear = month === 12 ? year + 1 : year;
+    const nm = nextMonth < 10 ? `0${nextMonth}` : nextMonth;
+    endISO = `${nextYear}-${nm}-01`;
+  } else if (filterType === 'Quarterly' && quarter) {
+    const qMap: any = { 1: ['01', '04'], 2: ['04', '07'], 3: ['07', '10'], 4: ['10', '01'] };
+    startISO = `${year}-${qMap[quarter][0]}-01`;
+    endISO = `${quarter === 4 ? year + 1 : year}-${qMap[quarter][1]}-01`;
+  }
+
   const { data, error } = await supabase
     .from("form1112master")
     .select("FirstSubmissionDate")
@@ -68,18 +87,58 @@ async function loadMonthlyFromForm1112(year: number): Promise<MonthDatum[]> {
   return groupByMonth(dates);
 }
 
-const CCPMCCStatsReport: React.FC<{ year: number }> = ({ year }) => {
+interface CCPMCCStatsReportProps {
+  year: number;
+  filterType?: 'Annual' | 'Monthly' | 'Quarterly';
+  month?: number;
+  quarter?: number;
+}
+
+const CCPMCCStatsReport: React.FC<CCPMCCStatsReportProps> = ({
+  year,
+  filterType = 'Annual',
+  month = 1,
+  quarter = 1,
+}) => {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [monthly, setMonthly] = useState<MonthDatum[]>([]);
-  const total = useMemo(() => monthly.reduce((s, d) => s + d.count, 0), [monthly]);
+
+  const periodLabel = useMemo(() => {
+    if (filterType === 'Annual') return String(year);
+    if (filterType === 'Monthly') {
+      return `${new Date(year, month - 1).toLocaleString('default', { month: 'long' })} ${year}`;
+    }
+    return `Q${quarter} (${['Jan-Mar', 'Apr-Jun', 'Jul-Sep', 'Oct-Dec'][quarter - 1]}) ${year}`;
+  }, [year, filterType, month, quarter]);
+
+  const filePeriod = useMemo(() => {
+    if (filterType === 'Annual') return String(year);
+    if (filterType === 'Monthly') {
+      return `${new Date(year, month - 1).toLocaleString('default', { month: 'short' })}${year}`;
+    }
+    return `Q${quarter}_${year}`;
+  }, [year, filterType, month, quarter]);
+
+  const chartData = useMemo(() => {
+    if (filterType === 'Monthly') {
+      return monthly.filter((_, idx) => idx === month - 1);
+    }
+    if (filterType === 'Quarterly') {
+      const startIdx = (quarter - 1) * 3;
+      return monthly.slice(startIdx, startIdx + 3);
+    }
+    return monthly;
+  }, [monthly, filterType, month, quarter]);
+
+  const total = useMemo(() => chartData.reduce((s, d) => s + d.count, 0), [chartData]);
 
   useEffect(() => {
     (async () => {
       try {
         setLoading(true);
         setErr(null);
-        const m = await loadMonthlyFromForm1112(year);
+        const m = await loadMonthlyFromForm1112(year, filterType, month, quarter);
         setMonthly(m);
       } catch (e: any) {
         console.error(e);
@@ -88,7 +147,7 @@ const CCPMCCStatsReport: React.FC<{ year: number }> = ({ year }) => {
         setLoading(false);
       }
     })();
-  }, [year]);
+  }, [year, filterType, month, quarter]);
 
   const onDownloadPDF = async () => {
     try {
@@ -114,10 +173,19 @@ const CCPMCCStatsReport: React.FC<{ year: number }> = ({ year }) => {
       cursorY += 18;
 
       doc.setFont("helvetica", "normal");
-      doc.text(`Year: ${year}`, pageWidth / 2, cursorY, { align: "center" });
+      doc.text(`Period: ${periodLabel}`, pageWidth / 2, cursorY, { align: "center" });
       cursorY += 20;
 
-      const tableBody = monthly.map((r) => [r.label, r.count]);
+      const filteredMonthly = monthly.filter((_, idx) => {
+        if (filterType === 'Monthly') return idx === month - 1;
+        if (filterType === 'Quarterly') {
+          const startIdx = (quarter - 1) * 3;
+          return idx >= startIdx && idx < startIdx + 3;
+        }
+        return true;
+      });
+
+      const tableBody = filteredMonthly.map((r) => [r.label, r.count]);
       autoTable(doc, {
         head: [["Month", "Count"]],
         body: tableBody,
@@ -133,7 +201,7 @@ const CCPMCCStatsReport: React.FC<{ year: number }> = ({ year }) => {
         },
       });
 
-      doc.save(`CCPMCC_Stats_${year}.pdf`);
+      doc.save(`CCPMCC_Stats_${filePeriod}.pdf`);
     } catch (e) {
       console.error("PDF export failed", e);
     }
@@ -153,7 +221,7 @@ const CCPMCCStatsReport: React.FC<{ year: number }> = ({ year }) => {
 
       <div className="bg-white rounded-lg shadow p-4">
         <h3 className="text-lg font-semibold mb-2">
-          Monthly Cases (Form 11 & 12) — {year} · Total: {total}
+          Monthly Cases (Form 11 & 12) — {periodLabel} · Total: {total}
         </h3>
         {err && <div className="bg-red-50 text-red-700 p-2 rounded mb-3">{err}</div>}
         {loading ? (
@@ -161,14 +229,14 @@ const CCPMCCStatsReport: React.FC<{ year: number }> = ({ year }) => {
         ) : (
           <div className="h-80">
             <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={monthly} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+              <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="label" />
                 <YAxis allowDecimals={false} />
                 <Tooltip />
                 <Legend />
                 <Bar dataKey="count" name="Cases">
-                  {monthly.map((_, i) => (
+                  {chartData.map((_, i) => (
                     <Cell key={i} fill={palette[i % palette.length]} />
                   ))}
                 </Bar>
@@ -179,11 +247,11 @@ const CCPMCCStatsReport: React.FC<{ year: number }> = ({ year }) => {
       </div>
 
       <div className="bg-white rounded-lg shadow p-4">
-        <h4 className="text-md font-semibold mb-2">Monthly Breakdown</h4>
+        <h4 className="text-md font-semibold mb-2">Breakdown ({periodLabel})</h4>
         {loading ? (
           <div className="h-32 animate-pulse bg-gray-100 rounded" />
-        ) : monthly.every((m) => m.count === 0) ? (
-          <div className="text-sm text-gray-500">No records for {year}.</div>
+        ) : chartData.every((m) => m.count === 0) ? (
+          <div className="text-sm text-gray-500">No records for {periodLabel}.</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-gray-200">
@@ -198,7 +266,7 @@ const CCPMCCStatsReport: React.FC<{ year: number }> = ({ year }) => {
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-100 text-sm">
-                {monthly.map((r) => (
+                {chartData.map((r) => (
                   <tr key={r.label}>
                     <td className="px-4 py-2">{r.label}</td>
                     <td className="px-4 py-2 text-right">{r.count}</td>

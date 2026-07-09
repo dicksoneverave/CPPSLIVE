@@ -337,6 +337,14 @@ const ReportsDashboard: React.FC = () => {
     })();
   }, [profile?.id]);
 
+  // Reset filter type to Annual for Data Entry, Provincial Claims Officer & Claims Manager reports
+  useEffect(() => {
+    const rep = reports.find(r => r.key === selectedKey);
+    if (rep && ['Data Entry', 'Provincial Claims Officer', 'Claims Manager'].includes(rep.section)) {
+      setFilterType('Annual');
+    }
+  }, [selectedKey]);
+
   // Load report whenever selection / filters change (generic reports only)
   const customKeys = useMemo(
     () => new Set([
@@ -564,76 +572,88 @@ const ReportsDashboard: React.FC = () => {
             </div>
 
             {/* Errors */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 bg-white p-4 rounded-lg shadow-sm border border-gray-100">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center bg-gray-100 rounded-lg p-1">
-                  <button
-                    onClick={() => setYear(year - 1)}
-                    className="p-1 hover:bg-white rounded-md transition-all text-gray-600"
+            {!['Data Entry', 'Provincial Claims Officer', 'Claims Manager'].includes(currentReport?.section ?? '') && (
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                    <button
+                      onClick={() => setYear(year - 1)}
+                      className="p-1 hover:bg-white rounded-md transition-all text-gray-600"
+                    >
+                      <ChevronLeft className="h-5 w-5" />
+                    </button>
+                    <span className="px-4 font-bold text-gray-800 min-w-[60px] text-center">
+                      {year}
+                    </span>
+                    <button
+                      onClick={() => setYear(year + 1)}
+                      className="p-1 hover:bg-white rounded-md transition-all text-gray-600"
+                    >
+                      <ChevronRight className="h-5 w-5" />
+                    </button>
+                  </div>
+
+                  <select
+                    value={filterType}
+                    onChange={(e) => setFilterType(e.target.value as any)}
+                    className="px-3 py-2 border rounded-md bg-white text-sm focus:ring-2 focus:ring-blue-500 font-medium"
                   >
-                    <ChevronLeft className="h-5 w-5" />
-                  </button>
-                  <span className="px-4 font-bold text-gray-800 min-w-[60px] text-center">
-                    {year}
-                  </span>
-                  <button
-                    onClick={() => setYear(year + 1)}
-                    className="p-1 hover:bg-white rounded-md transition-all text-gray-600"
-                  >
-                    <ChevronRight className="h-5 w-5" />
-                  </button>
+                    <option value="Annual">Annual View</option>
+                    <option value="Quarterly">Quarterly View</option>
+                    <option value="Monthly">Monthly View</option>
+                  </select>
+
+                  {filterType === 'Monthly' && (
+                    <select
+                      value={selectedMonth}
+                      onChange={(e) => setSelectedMonth(Number(e.target.value))}
+                      className="px-3 py-2 border rounded-md bg-white text-sm focus:ring-2 focus:ring-blue-500 font-medium animate-in fade-in"
+                    >
+                      {Array.from({ length: 12 }, (_, i) => (
+                        <option key={i + 1} value={i + 1}>
+                          {new Date(0, i).toLocaleString('default', { month: 'long' })}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+
+                  {filterType === 'Quarterly' && (
+                    <select
+                      value={selectedQuarter}
+                      onChange={(e) => setSelectedQuarter(Number(e.target.value))}
+                      className="px-3 py-2 border rounded-md bg-white text-sm focus:ring-2 focus:ring-blue-500 font-medium animate-in fade-in"
+                    >
+                      <option value={1}>Q1 (Jan-Mar)</option>
+                      <option value={2}>Q2 (Apr-Jun)</option>
+                      <option value={3}>Q3 (Jul-Sep)</option>
+                      <option value={4}>Q4 (Oct-Dec)</option>
+                    </select>
+                  )}
                 </div>
-
-                <select
-                  value={filterType}
-                  onChange={(e) => setFilterType(e.target.value as any)}
-                  className="px-3 py-2 border rounded-md bg-white text-sm focus:ring-2 focus:ring-blue-500 font-medium"
-                >
-                  <option value="Annual">Annual View</option>
-                  <option value="Quarterly">Quarterly View</option>
-                  <option value="Monthly">Monthly View</option>
-                </select>
-
-                {filterType === 'Monthly' && (
-                  <select
-                    value={selectedMonth}
-                    onChange={(e) => setSelectedMonth(Number(e.target.value))}
-                    className="px-3 py-2 border rounded-md bg-white text-sm focus:ring-2 focus:ring-blue-500 font-medium animate-in fade-in"
-                  >
-                    {Array.from({ length: 12 }, (_, i) => (
-                      <option key={i + 1} value={i + 1}>
-                        {new Date(0, i).toLocaleString('default', { month: 'long' })}
-                      </option>
-                    ))}
-                  </select>
-                )}
-
-                {filterType === 'Quarterly' && (
-                  <select
-                    value={selectedQuarter}
-                    onChange={(e) => setSelectedQuarter(Number(e.target.value))}
-                    className="px-3 py-2 border rounded-md bg-white text-sm focus:ring-2 focus:ring-blue-500 font-medium animate-in fade-in"
-                  >
-                    <option value={1}>Q1 (Jan-Mar)</option>
-                    <option value={2}>Q2 (Apr-Jun)</option>
-                    <option value={3}>Q3 (Jul-Sep)</option>
-                    <option value={4}>Q4 (Oct-Dec)</option>
-                  </select>
-                )}
               </div>
-            </div>
+            )}
 
             {err && <div className="bg-red-50 text-red-700 p-3 rounded mb-4">{err}</div>}
 
             {/* ---- CUSTOM REPORTS ---- */}
             {currentReport?.key === 'gen-marital-status' && (
               <div className="space-y-4">
-                <EmployerMaritalStatusReport />
+                <EmployerMaritalStatusReport
+                  year={year}
+                  filterType={filterType}
+                  month={selectedMonth}
+                  quarter={selectedQuarter}
+                />
               </div>
             )}
             {currentReport?.key === 'gen-accident-province' && (
               <div className="space-y-4">
-                <GeneralAccidentProvinceReport year={year} />
+                <GeneralAccidentProvinceReport
+                  year={year}
+                  filterType={filterType}
+                  month={selectedMonth}
+                  quarter={selectedQuarter}
+                />
               </div>
             )}
 
@@ -643,7 +663,10 @@ const ReportsDashboard: React.FC = () => {
       title="Accident Types by Age Group"
       year={year}           // controlled by ReportsDashboard
       showControls={false}  // hide internal year picker here
-      key={year}            // optional: remount on year change
+      filterType={filterType}
+      month={selectedMonth}
+      quarter={selectedQuarter}
+      key={`${year}-${filterType}-${selectedMonth}-${selectedQuarter}`}
     />
   </div>
 )}
@@ -654,7 +677,10 @@ const ReportsDashboard: React.FC = () => {
       title="Accident Types by Worker Gender"
       year={year}           // controlled from dashboard
       showControls={false}  // hide internal year picker here
-      key={year}            // remount on year change (ensures clean reload)
+      filterType={filterType}
+      month={selectedMonth}
+      quarter={selectedQuarter}
+      key={`${year}-${filterType}-${selectedMonth}-${selectedQuarter}`}
     />
   </div>
 )}
@@ -663,20 +689,34 @@ const ReportsDashboard: React.FC = () => {
               <div className="space-y-4">
                 <CCPMCCStatsReport
                   year={year}
-                  key={year}
+                  filterType={filterType}
+                  month={selectedMonth}
+                  quarter={selectedQuarter}
+                  key={`${year}-${filterType}-${selectedMonth}-${selectedQuarter}`}
                 />
               </div>
             )}
 
 {currentReport?.key === 'gen-ccpmccstats' && (
   <div className="space-y-4">
-    <CCPMCCStatsReport year={year} />
+    <CCPMCCStatsReport
+      year={year}
+      filterType={filterType}
+      month={selectedMonth}
+      quarter={selectedQuarter}
+      key={`${year}-${filterType}-${selectedMonth}-${selectedQuarter}`}
+    />
   </div>
 )}
 
 						{currentReport?.key === 'emp-insurance-company' && (
   				 <div className="space-y-4">
-    			 <EmployerInsuranceCompanyReport year={year} />
+    			 <EmployerInsuranceCompanyReport
+             year={year}
+             filterType={filterType}
+             month={selectedMonth}
+             quarter={selectedQuarter}
+           />
   			</div>
 			)}
 

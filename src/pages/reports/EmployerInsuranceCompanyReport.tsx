@@ -44,17 +44,35 @@ async function imageUrlToDataUrl(url: string): Promise<string | null> {
   }
 }
 
-async function loadInsuranceCompanyBreakdown(year: number): Promise<Row[]> {
-  const startISO = `${year}-01-01`;
-  const endISO = `${year + 1}-01-01`;
+async function loadInsuranceCompanyBreakdown(
+  year: number,
+  filterType: 'Annual' | 'Monthly' | 'Quarterly' = 'Annual',
+  month: number = 1,
+  quarter: number = 1
+): Promise<Row[]> {
+  let startDate = `${year}-01-01`;
+  let endDate = `${year + 1}-01-01`;
 
-  // Pull all cases for the year with InsuranceProviderIPACode + IncidentType
+  if (filterType === 'Monthly' && month) {
+    const m = month < 10 ? `0${month}` : month;
+    startDate = `${year}-${m}-01`;
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const nextYear = month === 12 ? year + 1 : year;
+    const nm = nextMonth < 10 ? `0${nextMonth}` : nextMonth;
+    endDate = `${nextYear}-${nm}-01`;
+  } else if (filterType === 'Quarterly' && quarter) {
+    const qMap: any = { 1: ['01', '04'], 2: ['04', '07'], 3: ['07', '10'], 4: ['10', '01'] };
+    startDate = `${year}-${qMap[quarter][0]}-01`;
+    endDate = `${quarter === 4 ? year + 1 : year}-${qMap[quarter][1]}-01`;
+  }
+
+  // Pull all cases for the period with InsuranceProviderIPACode + IncidentType
   const { data, error } = await supabase
     .from("form1112master")
     .select("InsuranceProviderIPACode, IncidentType, FirstSubmissionDate")
     .not("InsuranceProviderIPACode", "is", null)
-    .gte("FirstSubmissionDate", startISO)
-    .lt("FirstSubmissionDate", endISO);
+    .gte("FirstSubmissionDate", startDate)
+    .lt("FirstSubmissionDate", endDate);
 
   if (error) throw error;
 
@@ -102,8 +120,19 @@ async function loadInsuranceCompanyBreakdown(year: number): Promise<Row[]> {
   return out;
 }
 
-const EmployerInsuranceCompanyReport: React.FC<{ year: number; title?: string }> = ({
+interface EmployerInsuranceCompanyReportProps {
+  year: number;
+  filterType?: 'Annual' | 'Monthly' | 'Quarterly';
+  month?: number;
+  quarter?: number;
+  title?: string;
+}
+
+const EmployerInsuranceCompanyReport: React.FC<EmployerInsuranceCompanyReportProps> = ({
   year,
+  filterType = 'Annual',
+  month = 1,
+  quarter = 1,
   title = "Insurance Company wise – Accident Type",
 }) => {
   const [loading, setLoading] = useState(true);
@@ -118,7 +147,7 @@ const EmployerInsuranceCompanyReport: React.FC<{ year: number; title?: string }>
       try {
         setLoading(true);
         setErr(null);
-        const r = await loadInsuranceCompanyBreakdown(year);
+        const r = await loadInsuranceCompanyBreakdown(year, filterType, month, quarter);
         setRows(r);
       } catch (e: any) {
         console.error(e);
@@ -127,7 +156,7 @@ const EmployerInsuranceCompanyReport: React.FC<{ year: number; title?: string }>
         setLoading(false);
       }
     })();
-  }, [year]);
+  }, [year, filterType, month, quarter]);
 
   const onDownloadPDF = async () => {
     try {
@@ -154,8 +183,12 @@ const EmployerInsuranceCompanyReport: React.FC<{ year: number; title?: string }>
       doc.text(`CPPS Report: ${title}`, pageWidth / 2, cursorY, { align: "center" });
       cursorY += 18;
 
+      const periodLabel = filterType === 'Annual' ? String(year) : 
+                          filterType === 'Monthly' ? `${new Date(year, month - 1).toLocaleString('default', { month: 'long' })} ${year}` :
+                          `Q${quarter} (${['Jan-Mar','Apr-Jun','Jul-Sep','Oct-Dec'][quarter-1]}) ${year}`;
+
       doc.setFont("helvetica", "normal");
-      doc.text(`Year: ${year}`, pageWidth / 2, cursorY, { align: "center" });
+      doc.text(`Period: ${periodLabel}`, pageWidth / 2, cursorY, { align: "center" });
       cursorY += 16;
 
       // Table
@@ -175,7 +208,11 @@ const EmployerInsuranceCompanyReport: React.FC<{ year: number; title?: string }>
         },
       });
 
-      doc.save(`InsuranceCompany_AccidentType_${year}.pdf`);
+      const filePeriod = filterType === 'Annual' ? String(year) : 
+                         filterType === 'Monthly' ? `${new Date(year, month - 1).toLocaleString('default', { month: 'short' })}${year}` :
+                         `Q${quarter}_${year}`;
+
+      doc.save(`InsuranceCompany_AccidentType_${filePeriod}.pdf`);
     } catch (e) {
       console.error("PDF export failed", e);
     }
@@ -198,13 +235,13 @@ const EmployerInsuranceCompanyReport: React.FC<{ year: number; title?: string }>
       {/* Chart */}
       <div className="bg-white rounded-lg shadow p-4">
         <h3 className="text-lg font-semibold mb-2">
-          {title} — {year} · Total: {total}
+          {title} — {filterType === 'Annual' ? year : filterType === 'Monthly' ? `${new Date(year, month - 1).toLocaleString('default', { month: 'long' })} ${year}` : `Q${quarter} (${['Jan-Mar','Apr-Jun','Jul-Sep','Oct-Dec'][quarter-1]}) ${year}`} · Total: {total}
         </h3>
         {err && <div className="bg-red-50 text-red-700 p-2 rounded mb-3">{err}</div>}
         {loading ? (
           <div className="h-96 animate-pulse bg-gray-100 rounded" />
         ) : rows.length === 0 ? (
-          <div className="text-sm text-gray-500">No records for {year}.</div>
+          <div className="text-sm text-gray-500">No records for {filterType === 'Annual' ? year : filterType === 'Monthly' ? `${new Date(year, month - 1).toLocaleString('default', { month: 'long' })} ${year}` : `Q${quarter} (${['Jan-Mar','Apr-Jun','Jul-Sep','Oct-Dec'][quarter-1]}) ${year}`}.</div>
         ) : (
           <div className="h-96">
             <ResponsiveContainer width="100%" height="100%">

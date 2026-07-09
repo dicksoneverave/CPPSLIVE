@@ -193,23 +193,38 @@ useEffect(() => {
           }
         }
 
-        // 3) Insert / upsert a tribunal hearing submission record
-        // Assumed table name "tribunalhearingsubmissions" based on THS* prefix
-        const { error: insErr } = await supabase
+        // 3) Insert or update a tribunal hearing submission record
+        const { data: existing, error: checkErr } = await supabase
           .from('tribunalhearingschedule')
-          .upsert(
-            [
-              {
-                IRN: irnValue,
-                THSHearingStatus: 'HearingPending',
-                THSHearingType: hearingType,
-                THSSubmissionDate: today,
-                THSWorkerOrganizatiosType: orgType, // keep name as specified
-              },
-            ],
-            { onConflict: 'IRN' }
-          );
-        if (insErr) throw insErr;
+          .select('THSID')
+          .eq('IRN', irnValue)
+          .maybeSingle();
+        
+        if (checkErr) throw checkErr;
+
+        if (existing) {
+          const { error: upErr } = await supabase
+            .from('tribunalhearingschedule')
+            .update({
+              THSHearingStatus: 'HearingPending',
+              THSHearingType: hearingType,
+              THSSubmissionDate: today,
+              THSWorkerOrganizationType: orgType,
+            })
+            .eq('THSID', existing.THSID);
+          if (upErr) throw upErr;
+        } else {
+          const { error: insErr } = await supabase
+            .from('tribunalhearingschedule')
+            .insert({
+              IRN: irnValue,
+              THSHearingStatus: 'HearingPending',
+              THSHearingType: hearingType,
+              THSSubmissionDate: today,
+              THSWorkerOrganizationType: orgType,
+            });
+          if (insErr) throw insErr;
+        }
 
         closeWithSuccess('Successfully Forwarded to Tribunal');
         return;
@@ -265,7 +280,11 @@ useEffect(() => {
 
   {resolvedIRN ? (
     IncidentType === 'Death' ? (
-      <ViewForm12 workerId={workerIdForView} irn={resolvedIRN} embedded />
+      workerIdForView ? (
+        <ViewForm12 workerId={workerIdForView} irn={resolvedIRN} embedded />
+      ) : (
+        <p className="text-gray-500">Loading Form 12…</p>
+      )
     ) : workerIdForView ? (
       <ViewForm11 workerId={workerIdForView} irn={resolvedIRN} embedded />
     ) : (

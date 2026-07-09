@@ -47,9 +47,9 @@ const toDateInput = (d?: string | null) => {
 // Types
 // ==============================
 export interface ViewForm12Props {
-  workerId: string;
+  workerId?: string | null;
   irn?: number | string | null; // which IRN to view (fallback to latest for worker)
-  onClose: () => void;
+  onClose?: () => void;
   embedded?: boolean; // when true, render full-width without modal chrome
 }
 
@@ -193,7 +193,7 @@ const closePreview = () => setPreviewUrl(null);
 
   // Form state (init from NewForm12 defaults; will be overwritten by loaded data)
   const [formData, setFormData] = useState<Form12Data>({
-    WorkerID: workerId,
+    WorkerID: workerId || "",
     WorkerFirstName: "",
     WorkerLastName: "",
     WorkerDOB: "",
@@ -239,8 +239,6 @@ const closePreview = () => setPreviewUrl(null);
     SubContractorOrganizationName: "",
     SubContractorLocation: "",
     SubContractorNatureOfBusiness: "",
-
-
 
     IncidentDate: "",
     IncidentLocation: "",
@@ -314,34 +312,7 @@ const closePreview = () => setPreviewUrl(null);
           .select("*");
         if (!cancelled) setInsuranceProviders(providers || []);
 
-        // Worker snapshot
-        const { data: worker } = await supabase
-          .from("workerpersonaldetails")
-          .select("*")
-          .eq("WorkerID", workerId)
-          .single();
-
-        // Employment snapshot
-        const { data: employment } = await supabase
-          .from("currentemploymentdetails")
-          .select("*")
-          .eq("WorkerID", workerId)
-          .maybeSingle();
-
-        // Dependants & history
-        const { data: depData } = await supabase
-          .from("dependantpersonaldetails")
-          .select("*")
-          .eq("WorkerID", workerId);
-        if (!cancelled) setDependants(depData || []);
-
-        const { data: hist } = await supabase
-          .from("workhistory")
-          .select("*")
-          .eq("WorkerID", workerId);
-        if (!cancelled) setWorkHistory(hist || []);
-
-        // Load existing Form12 row
+        // Load existing Form12 row first (to get WorkerID if prop was not provided)
         let formRow: any = null;
         if (irn) {
           const { data } = await supabase
@@ -350,7 +321,7 @@ const closePreview = () => setPreviewUrl(null);
             .eq("IRN", irn)
             .maybeSingle();
           formRow = data;
-        } else {
+        } else if (workerId) {
           const { data: rows } = await supabase
             .from("form1112master")
             .select("*")
@@ -361,9 +332,49 @@ const closePreview = () => setPreviewUrl(null);
         }
         if (!cancelled && formRow?.IRN) setViewIRN(formRow.IRN);
 
+        const resolvedWorkerId = workerId || formRow?.WorkerID || "";
+
+        let worker: any = null;
+        let employment: any = null;
+        let depData: any[] = [];
+        let hist: any[] = [];
+
+        if (resolvedWorkerId) {
+          // Worker snapshot
+          const { data: wData } = await supabase
+            .from("workerpersonaldetails")
+            .select("*")
+            .eq("WorkerID", resolvedWorkerId)
+            .single();
+          worker = wData;
+
+          // Employment snapshot
+          const { data: empData } = await supabase
+            .from("currentemploymentdetails")
+            .select("*")
+            .eq("WorkerID", resolvedWorkerId)
+            .maybeSingle();
+          employment = empData;
+
+          // Dependants & history
+          const { data: dData } = await supabase
+            .from("dependantpersonaldetails")
+            .select("*")
+            .eq("WorkerID", resolvedWorkerId);
+          depData = dData || [];
+          if (!cancelled) setDependants(depData);
+
+          const { data: hData } = await supabase
+            .from("workhistory")
+            .select("*")
+            .eq("WorkerID", resolvedWorkerId);
+          hist = hData || [];
+          if (!cancelled) setWorkHistory(hist);
+        }
+
         // Merge into Form12Data shape
         const baseDefaults: any = {
-          WorkerID: workerId,
+          WorkerID: resolvedWorkerId,
           WorkerFirstName: "",
           WorkerLastName: "",
           WorkerDOB: "",
@@ -410,7 +421,7 @@ const closePreview = () => setPreviewUrl(null);
           SubContractorLocation: "",
           SubContractorNatureOfBusiness: "",
 
-					ReceivedDate: "",
+          ReceivedDate: "",
 
           IncidentDate: "",
           IncidentLocation: "",
@@ -466,10 +477,11 @@ const closePreview = () => setPreviewUrl(null);
 
         const merged = {
           ...baseDefaults,
+          WorkerID: resolvedWorkerId,
           ...(worker || {}),
           ...(employment || {}),
           ...(formRow || {}),
-          WorkerHaveDependants: (depData || []).length > 0,
+          WorkerHaveDependants: depData.length > 0,
         };
         const sanitized: any = {};
         for (const k in baseDefaults) sanitized[k] = merged[k] ?? baseDefaults[k];
@@ -532,7 +544,7 @@ const closePreview = () => setPreviewUrl(null);
         if (!cancelled) setFormData(sanitized as Form12Data);
 
         // Passport URL resolve
-        const rawPath = (worker as any)?.WorkerPassportPhoto || "";
+        const rawPath = worker?.WorkerPassportPhoto || "";
         const path = normalizeStoragePath(rawPath);
         if (path) {
           try {
@@ -1244,9 +1256,11 @@ const closePreview = () => setPreviewUrl(null);
               Worker: <span className="font-mono">{formData.WorkerID || "—"}</span>
             </div>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-500">
-            <X className="h-5 w-5" />
-          </button>
+          {onClose && (
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-500">
+              <X className="h-5 w-5" />
+            </button>
+          )}
         </div>
 
         <div ref={formRef} className="flex-1 overflow-y-auto">

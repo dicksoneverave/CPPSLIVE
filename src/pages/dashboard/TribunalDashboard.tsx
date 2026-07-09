@@ -1,5 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Scale, Calendar, Users, FileText, ChevronDown, UserCheck, ClipboardCheck } from 'lucide-react';
+import {
+  ResponsiveContainer,
+  BarChart, CartesianGrid, XAxis, YAxis, Tooltip, Legend, Bar
+} from 'recharts';
 import { useAuth } from '../../context/AuthContext';
 import { supabase } from '../../services/supabase';
 import ListPendingHearingsPublic from '../../components/forms/ListPendingHearingsPublic';
@@ -46,14 +50,28 @@ const DashboardCard: React.FC<{
   icon: React.ReactNode;
   onClick: () => void;
   loading?: boolean;
-}> = ({ title, count, icon, onClick, loading }) => (
+  borderClass?: string;
+  iconBgClass?: string;
+  iconTextClass?: string;
+  iconHoverBgClass?: string;
+}> = ({ 
+  title, 
+  count, 
+  icon, 
+  onClick, 
+  loading, 
+  borderClass = "border-primary", 
+  iconBgClass = "bg-primary/10", 
+  iconTextClass = "text-primary", 
+  iconHoverBgClass = "group-hover:bg-primary" 
+}) => (
   <div 
     onClick={onClick}
-    className="bg-white rounded-lg shadow-md p-6 border-l-4 border-primary hover:shadow-lg transition-shadow cursor-pointer group"
+    className={`bg-white rounded-lg shadow-md p-6 border-l-4 ${borderClass} hover:shadow-lg transition-shadow cursor-pointer group`}
   >
     <div className="flex items-center justify-between">
       <div className="flex items-center">
-        <div className="p-3 rounded-full bg-primary/10 text-primary group-hover:bg-primary group-hover:text-white transition-colors duration-300 mr-4">
+        <div className={`p-3 rounded-full ${iconBgClass} ${iconTextClass} ${iconHoverBgClass} group-hover:text-white transition-colors duration-300 mr-4`}>
           {icon}
         </div>
         <div>
@@ -71,7 +89,7 @@ const DashboardCard: React.FC<{
           </p>
         </div>
       </div>
-      <div className="text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className={`${iconTextClass} opacity-0 group-hover:opacity-100 transition-opacity`}>
         <FileText size={20} />
       </div>
     </div>
@@ -82,6 +100,53 @@ const TribunalDashboard: React.FC = () => {
   const { profile } = useAuth();
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Yearly monthly stats states
+  const monthLabels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const initialMonthlyData = () => monthLabels.map(label => ({ label, count: 0 }));
+
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [employerAcceptedMonthly, setEmployerAcceptedMonthly] = useState<{ label: string; count: number }[]>(initialMonthlyData());
+  const [workerNotifiedMonthly, setWorkerNotifiedMonthly] = useState<{ label: string; count: number }[]>(initialMonthlyData());
+  const [workerResponseMonthly, setWorkerResponseMonthly] = useState<{ label: string; count: number }[]>(initialMonthlyData());
+  const [form7ClaimsMonthly, setForm7ClaimsMonthly] = useState<{ label: string; count: number }[]>(initialMonthlyData());
+  const [hearingPendingMonthly, setHearingPendingMonthly] = useState<{ label: string; count: number }[]>(initialMonthlyData());
+  const [scheduledHearingsMonthly, setScheduledHearingsMonthly] = useState<{ label: string; count: number }[]>(initialMonthlyData());
+  const [consentedMonthly, setConsentedMonthly] = useState<{ label: string; count: number }[]>(initialMonthlyData());
+  const [adjournedMonthly, setAdjournedMonthly] = useState<{ label: string; count: number }[]>(initialMonthlyData());
+  const [dismissedMonthly, setDismissedMonthly] = useState<{ label: string; count: number }[]>(initialMonthlyData());
+
+  const claimStatsData = useMemo(() => {
+    return monthLabels.map((label, idx) => ({
+      label,
+      employerAccepted: employerAcceptedMonthly[idx]?.count || 0,
+      workerNotified: workerNotifiedMonthly[idx]?.count || 0,
+      workerResponse: workerResponseMonthly[idx]?.count || 0,
+      form7Claims: form7ClaimsMonthly[idx]?.count || 0,
+    }));
+  }, [employerAcceptedMonthly, workerNotifiedMonthly, workerResponseMonthly, form7ClaimsMonthly]);
+
+  const hearingStatsData = useMemo(() => {
+    return monthLabels.map((label, idx) => ({
+      label,
+      hearingPending: hearingPendingMonthly[idx]?.count || 0,
+      scheduled: scheduledHearingsMonthly[idx]?.count || 0,
+      consented: consentedMonthly[idx]?.count || 0,
+      adjourned: adjournedMonthly[idx]?.count || 0,
+      dismissed: dismissedMonthly[idx]?.count || 0,
+    }));
+  }, [hearingPendingMonthly, scheduledHearingsMonthly, consentedMonthly, adjournedMonthly, dismissedMonthly]);
+
+  const groupCountsByMonth = (dates: string[]): { label: string; count: number }[] => {
+    const buckets = new Array(12).fill(0);
+    for (const iso of dates) {
+      const d = new Date(iso);
+      if (!isNaN(d.getTime())) {
+        buckets[d.getMonth()] += 1;
+      }
+    }
+    return buckets.map((count, i) => ({ label: monthLabels[i], count }));
+  };
   
   // Stats counts
   const [form18EmployerAcceptedCount, setForm18EmployerAcceptedCount] = useState(0);
@@ -218,6 +283,114 @@ const TribunalDashboard: React.FC = () => {
         setForm18WorkerAcceptedCount(0);
       }
 
+      // Fetch Monthly Datasets for Selected Year
+      const startISO = `${year}-01-01`;
+      const endISO = `${year + 1}-01-01`;
+
+      const mForm7Q = supabase
+        .from('form7master')
+        .select('F7MEmployerRejectedDate')
+        .gte('F7MEmployerRejectedDate', startISO)
+        .lt('F7MEmployerRejectedDate', endISO);
+
+      const mPendingQ = supabase
+        .from('tribunalhearingschedule')
+        .select('THSSubmissionDate')
+        .eq('THSHearingStatus', 'HearingPending')
+        .gte('THSSubmissionDate', startISO)
+        .lt('THSSubmissionDate', endISO);
+
+      const mScheduledQ = supabase
+        .from('tribunalhearingsethearing')
+        .select('created_at')
+        .eq('THSHStatus', 'Pending')
+        .gte('created_at', startISO)
+        .lt('created_at', endISO);
+
+      const mConsentedQ = supabase
+        .from('tribunalhearingoutcome')
+        .select('created_at')
+        .eq('THODecision', 'Approved')
+        .eq('THOHearingStatus', 'Processed')
+        .gte('created_at', startISO)
+        .lt('created_at', endISO);
+
+      const mAdjournedQ = supabase
+        .from('tribunalhearingoutcome')
+        .select('created_at')
+        .eq('THODecision', 'Adjourned')
+        .gte('created_at', startISO)
+        .lt('created_at', endISO);
+
+      const mDismissedQ = supabase
+        .from('tribunalhearingoutcome')
+        .select('created_at')
+        .eq('THODecision', 'Dismissed')
+        .gte('created_at', startISO)
+        .lt('created_at', endISO);
+
+      const mAcceptedQ = supabase
+        .from('form18master')
+        .select('F18MEmployerAcceptedDate')
+        .eq('F18MStatus', 'EmployerAccepted')
+        .gte('F18MEmployerAcceptedDate', startISO)
+        .lt('F18MEmployerAcceptedDate', endISO);
+        
+      const mNotifiedQ = supabase
+        .from('form18master')
+        .select('F18MEmployerAcceptedDate')
+        .eq('F18MStatus', 'NotifiedToWorker')
+        .gte('F18MEmployerAcceptedDate', startISO)
+        .lt('F18MEmployerAcceptedDate', endISO);
+        
+      const mWorkerAcceptedQ = supabase
+        .from('form18master')
+        .select('F18MWorkerAcceptedDate')
+        .eq('F18MStatus', 'WorkerAccepted')
+        .gte('F18MWorkerAcceptedDate', startISO)
+        .lt('F18MWorkerAcceptedDate', endISO);
+
+      if (tribunalIRNs.length > 0) {
+        mAcceptedQ.in('IRN', tribunalIRNs);
+        mNotifiedQ.in('IRN', tribunalIRNs);
+        mWorkerAcceptedQ.in('IRN', tribunalIRNs);
+      }
+
+      if (tribunalIRNs.length === 0) {
+        setEmployerAcceptedMonthly(initialMonthlyData());
+        setWorkerNotifiedMonthly(initialMonthlyData());
+        setWorkerResponseMonthly(initialMonthlyData());
+        
+        const [mForm7, mPending, mScheduled, mConsented, mAdjourned, mDismissed] = await Promise.all([
+          mForm7Q, mPendingQ, mScheduledQ, mConsentedQ, mAdjournedQ, mDismissedQ
+        ]);
+
+        setForm7ClaimsMonthly(groupCountsByMonth((mForm7.data || []).map(r => r.F7MEmployerRejectedDate as string).filter(Boolean)));
+        setHearingPendingMonthly(groupCountsByMonth((mPending.data || []).map(r => r.THSSubmissionDate as string).filter(Boolean)));
+        setScheduledHearingsMonthly(groupCountsByMonth((mScheduled.data || []).map(r => r.created_at as string).filter(Boolean)));
+        setConsentedMonthly(groupCountsByMonth((mConsented.data || []).map(r => r.created_at as string).filter(Boolean)));
+        setAdjournedMonthly(groupCountsByMonth((mAdjourned.data || []).map(r => r.created_at as string).filter(Boolean)));
+        setDismissedMonthly(groupCountsByMonth((mDismissed.data || []).map(r => r.created_at as string).filter(Boolean)));
+      } else {
+        const [
+          mForm7, mPending, mScheduled, mConsented, mAdjourned, mDismissed,
+          mAccepted, mNotified, mWorkerAccepted
+        ] = await Promise.all([
+          mForm7Q, mPendingQ, mScheduledQ, mConsentedQ, mAdjournedQ, mDismissedQ,
+          mAcceptedQ, mNotifiedQ, mWorkerAcceptedQ
+        ]);
+
+        setEmployerAcceptedMonthly(groupCountsByMonth((mAccepted.data || []).map(r => r.F18MEmployerAcceptedDate as string).filter(Boolean)));
+        setWorkerNotifiedMonthly(groupCountsByMonth((mNotified.data || []).map(r => r.F18MEmployerAcceptedDate as string).filter(Boolean)));
+        setWorkerResponseMonthly(groupCountsByMonth((mWorkerAccepted.data || []).map(r => r.F18MWorkerAcceptedDate as string).filter(Boolean)));
+        setForm7ClaimsMonthly(groupCountsByMonth((mForm7.data || []).map(r => r.F7MEmployerRejectedDate as string).filter(Boolean)));
+        setHearingPendingMonthly(groupCountsByMonth((mPending.data || []).map(r => r.THSSubmissionDate as string).filter(Boolean)));
+        setScheduledHearingsMonthly(groupCountsByMonth((mScheduled.data || []).map(r => r.created_at as string).filter(Boolean)));
+        setConsentedMonthly(groupCountsByMonth((mConsented.data || []).map(r => r.created_at as string).filter(Boolean)));
+        setAdjournedMonthly(groupCountsByMonth((mAdjourned.data || []).map(r => r.created_at as string).filter(Boolean)));
+        setDismissedMonthly(groupCountsByMonth((mDismissed.data || []).map(r => r.created_at as string).filter(Boolean)));
+      }
+
     } catch (err) {
       console.error('Error fetching dashboard counts:', err);
     } finally {
@@ -229,7 +402,7 @@ const TribunalDashboard: React.FC = () => {
     fetchCounts();
     const interval = setInterval(fetchCounts, 30000); // refresh every 30s
     return () => clearInterval(interval);
-  }, []);
+  }, [year]);
 
   const incrementRefresh = () => setRefreshKey(prev => prev + 1);
 
@@ -461,6 +634,10 @@ const TribunalDashboard: React.FC = () => {
             icon={<FileText size={24} />}
             onClick={() => setShowForm18EmployerAccepted(true)}
             loading={loading}
+            borderClass="border-sky-500"
+            iconBgClass="bg-sky-50"
+            iconTextClass="text-sky-600"
+            iconHoverBgClass="group-hover:bg-sky-600"
           />
           <DashboardCard
             title="Worker Notified"
@@ -468,6 +645,10 @@ const TribunalDashboard: React.FC = () => {
             icon={<UserCheck size={24} />}
             onClick={() => setShowForm18WorkerNotified(true)}
             loading={loading}
+            borderClass="border-orange-500"
+            iconBgClass="bg-orange-50"
+            iconTextClass="text-orange-600"
+            iconHoverBgClass="group-hover:bg-orange-600"
           />
           <DashboardCard
             title="Worker Response"
@@ -475,6 +656,10 @@ const TribunalDashboard: React.FC = () => {
             icon={<ClipboardCheck size={24} />}
             onClick={() => setShowForm18WorkerResponse(true)}
             loading={loading}
+            borderClass="border-emerald-500"
+            iconBgClass="bg-emerald-50"
+            iconTextClass="text-emerald-600"
+            iconHoverBgClass="group-hover:bg-emerald-600"
           />
           <DashboardCard
             title="Form 7 Claims"
@@ -482,6 +667,10 @@ const TribunalDashboard: React.FC = () => {
             icon={<Scale size={24} />}
             onClick={() => setShowForm7(true)}
             loading={loading}
+            borderClass="border-teal-500"
+            iconBgClass="bg-teal-50"
+            iconTextClass="text-teal-600"
+            iconHoverBgClass="group-hover:bg-teal-600"
           />
         </div>
 
@@ -490,38 +679,145 @@ const TribunalDashboard: React.FC = () => {
           <DashboardCard
             title="Hearing Pending"
             count={hearingPendingCount}
-            icon={<Calendar size={24} className="text-blue-600" />}
-            onClick={() => {}} // Could link to a aggregate pending view if needed
+            icon={<Calendar size={24} />}
+            onClick={() => {}}
             loading={loading}
+            borderClass="border-violet-500"
+            iconBgClass="bg-violet-50"
+            iconTextClass="text-violet-600"
+            iconHoverBgClass="group-hover:bg-violet-600"
           />
           <DashboardCard
             title="Scheduled Hearings"
             count={scheduledHearingsCount}
-            icon={<Calendar size={24} className="text-green-600" />} // Static icons for non-handled clicks
+            icon={<Calendar size={24} />}
             onClick={() => {}}
             loading={loading}
+            borderClass="border-indigo-500"
+            iconBgClass="bg-indigo-50"
+            iconTextClass="text-indigo-600"
+            iconHoverBgClass="group-hover:bg-indigo-600"
           />
           <DashboardCard
             title="Approved / Consented"
             count={consentedCount}
-            icon={<Scale size={24} className="text-amber-600" />}
+            icon={<Scale size={24} />}
             onClick={() => setShowConsentedApprovedList(true)}
             loading={loading}
+            borderClass="border-amber-500"
+            iconBgClass="bg-amber-50"
+            iconTextClass="text-amber-600"
+            iconHoverBgClass="group-hover:bg-amber-600"
           />
           <DashboardCard
             title="Adjourned"
             count={adjournedCount}
-            icon={<Users size={24} className="text-purple-600" />}
+            icon={<Users size={24} />}
             onClick={() => setShowAdjournedList(true)}
             loading={loading}
+            borderClass="border-fuchsia-500"
+            iconBgClass="bg-fuchsia-50"
+            iconTextClass="text-fuchsia-600"
+            iconHoverBgClass="group-hover:bg-fuchsia-600"
           />
           <DashboardCard
             title="Dismissed"
             count={dismissedCount}
-            icon={<Users size={24} className="text-red-600" />}
+            icon={<Users size={24} />}
             onClick={() => setShowDismissedAppealList(true)}
             loading={loading}
+            borderClass="border-rose-500"
+            iconBgClass="bg-rose-50"
+            iconTextClass="text-rose-600"
+            iconHoverBgClass="group-hover:bg-rose-600"
           />
+        </div>
+      </div>
+
+      {/* Graphs Section */}
+      <div className="mt-12 bg-white rounded-lg shadow-md p-6">
+        <div className="flex flex-col md:flex-row md:items-center justify-between border-b pb-4 mb-6">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">Analytics & Trends</h2>
+            <p className="text-sm text-gray-500">Yearly trends and monthly statistics overview</p>
+          </div>
+          {/* Year selector */}
+          <div className="flex items-center gap-2 mt-4 md:mt-0">
+            <span className="text-sm font-semibold text-gray-600">Select Year:</span>
+            <div className="flex items-center gap-1">
+              <button 
+                className="px-3 py-1 border rounded bg-gray-50 hover:bg-gray-100 font-semibold transition-colors"
+                onClick={() => setYear(y => y - 1)}
+              >
+                ←
+              </button>
+              <input
+                type="number"
+                className="w-20 px-2 py-1 border rounded text-center font-bold"
+                value={year}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!Number.isNaN(v)) setYear(v);
+                }}
+              />
+              <button 
+                className="px-3 py-1 border rounded bg-gray-50 hover:bg-gray-100 font-semibold transition-colors"
+                onClick={() => setYear(y => y + 1)}
+              >
+                →
+              </button>
+              <button 
+                className="ml-2 px-3 py-1 border rounded bg-primary text-white hover:bg-primary-dark font-semibold text-xs transition-colors"
+                onClick={() => setYear(new Date().getFullYear())}
+              >
+                Current Year
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Charts Grid */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          {/* Chart 1: Claim Status Trends */}
+          <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+            <h3 className="text-base font-bold text-gray-800 mb-4">Claim Notifications & Responses ({year})</h3>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={claimStatsData} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                  <XAxis dataKey="label" stroke="#6b7280" fontSize={12} />
+                  <YAxis allowDecimals={false} stroke="#6b7280" fontSize={12} />
+                  <Tooltip contentStyle={{ borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
+                  <Legend verticalAlign="top" height={36} iconType="circle" />
+                  <Bar dataKey="employerAccepted" name="Employer Accepted" fill="#38bdf8" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="workerNotified" name="Worker Notified" fill="#fb923c" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="workerResponse" name="Worker Response" fill="#34d399" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="form7Claims" name="Form 7 Claims" fill="#2dd4bf" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Chart 2: Hearing & Outcome Activity */}
+          <div className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+            <h3 className="text-base font-bold text-gray-800 mb-4">Hearing Activity & Decisions ({year})</h3>
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={hearingStatsData} margin={{ top: 20, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
+                  <XAxis dataKey="label" stroke="#6b7280" fontSize={12} />
+                  <YAxis allowDecimals={false} stroke="#6b7280" fontSize={12} />
+                  <Tooltip contentStyle={{ borderRadius: '8px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
+                  <Legend verticalAlign="top" height={36} iconType="circle" />
+                  <Bar dataKey="hearingPending" name="Hearing Pending" fill="#818cf8" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="scheduled" name="Scheduled" fill="#6366f1" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="consented" name="Consented" fill="#fbbf24" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="adjourned" name="Adjourned" fill="#c084fc" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="dismissed" name="Dismissed" fill="#f87171" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
         </div>
       </div>
 
